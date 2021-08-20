@@ -235,43 +235,67 @@ spec:
                     description: Type is NotUpdate, the SidecarSet don't update the injected pods, it will only inject sidecar container into the newly created pods. Type is RollingUpdate, the SidecarSet will update the injected pods to the latest version on RollingUpdate Strategy. default is RollingUpdate
                     type: string
                 type: object
-              volumes:
-                description: List of volumes that can be mounted by sidecar containers
-                items:
-                  description: Volume represents a named volume in a pod that may be accessed by any container in the pod.
-                  type: object
-                  x-kubernetes-preserve-unknown-fields: true
-                type: array
-            type: object
-          status:
-            description: SidecarSetStatus defines the observed state of SidecarSet
-            properties:
-              matchedPods:
-                description: matchedPods is the number of Pods whose labels are matched with this SidecarSet's selector and are created after sidecarset creates
-                format: int32
-                type: integer
-              observedGeneration:
-                description: observedGeneration is the most recent generation observed for this SidecarSet. It corresponds to the SidecarSet's generation, which is updated on mutation by the API Server.
-                format: int64
-                type: integer
-              readyPods:
-                description: readyPods is the number of matched Pods that have a ready condition
-                format: int32
-                type: integer
-              updatedPods:
-                description: updatedPods is the number of matched Pods that are injected with the latest SidecarSet's containers
-                format: int32
-                type: integer
-              updatedReadyPods:
-                description: updatedReadyPods is the number of matched pods that updated and ready
-                format: int32
-                type: integer
-            required:
-            - matchedPods
-            - readyPods
-            - updatedPods
-            type: object
-        type: object
+                x-kubernetes-preserve-unknown-fields: true
+              type: array
+          type: object
+        status:
+          description: SidecarSetStatus defines the observed state of SidecarSet
+          properties:
+            collisionCount:
+              description: CollisionCount is the count of hash collisions for the
+                SidecarSet. The SidecarSet controller uses this field as a collision
+                avoidance mechanism when it needs to create the name for the newest
+                ControllerRevision.
+              format: int32
+              type: integer
+            matchedPods:
+              description: matchedPods is the number of Pods whose labels are matched
+                with this SidecarSet's selector and are created after sidecarset creates
+              format: int32
+              type: integer
+            observedGeneration:
+              description: observedGeneration is the most recent generation observed
+                for this SidecarSet. It corresponds to the SidecarSet's generation,
+                which is updated on mutation by the API Server.
+              format: int64
+              type: integer
+            readyPods:
+              description: readyPods is the number of matched Pods that have a ready
+                condition
+              format: int32
+              type: integer
+            revisionHistoryLimit:
+              description: RevisionHistoryLimit indicates the maximum quantity of
+                stored revisions about SidecarSet. This value is set by SidecarSet
+                controller. default value is 10
+              format: int32
+              type: integer
+            updateRevision:
+              description: 'Revision, if not empty, indicates the latest revision
+                name of the SidecarSet. If a Pod was injected this latest revision
+                of sidecarSet, Pod.Annotations["kruise.io/sidecarset-injected-revision"]
+                will be ''{"<sidecar-name>": "latest"}'',  else it will be a specific
+                revision name'
+              type: string
+            updatedPods:
+              description: updatedPods is the number of matched Pods that are injected
+                with the latest SidecarSet's containers
+              format: int32
+              type: integer
+            updatedReadyPods:
+              description: updatedReadyPods is the number of matched pods that updated
+                and ready
+              format: int32
+              type: integer
+          required:
+          - matchedPods
+          - readyPods
+          - revisionHistoryLimit
+          - updatedPods
+          type: object
+      type: object
+  version: v1alpha1
+  - name: v1alpha1
     served: true
     storage: true
     subresources:

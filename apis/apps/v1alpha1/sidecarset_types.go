@@ -189,6 +189,22 @@ type SidecarSetStatus struct {
 
 	// updatedReadyPods is the number of matched pods that updated and ready
 	UpdatedReadyPods int32 `json:"updatedReadyPods,omitempty"`
+
+	// Revision, if not empty, indicates the latest revision name of the SidecarSet.
+	// If a Pod was injected this latest revision of sidecarSet,
+	// Pod.Annotations["kruise.io/sidecarset-injected-revision"] will be
+	// '{"<sidecar-name>": "latest"}',  else it will be a specific revision name
+	LatestRevision string `json:"updateRevision,omitempty"`
+
+	// CollisionCount is the count of hash collisions for the SidecarSet. The SidecarSet controller
+	// uses this field as a collision avoidance mechanism when it needs to create the name for the
+	// newest ControllerRevision.
+	CollisionCount *int32 `json:"collisionCount,omitempty"`
+
+	// RevisionHistoryLimit indicates the maximum quantity of stored revisions about SidecarSet.
+	// This value is set by SidecarSet controller.
+	// default value is 10
+	RevisionHistoryLimit int32 `json:"revisionHistoryLimit"`
 }
 
 // +genclient

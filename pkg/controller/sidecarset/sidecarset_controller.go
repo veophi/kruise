@@ -47,6 +47,7 @@ func init() {
 }
 
 var (
+	maxStoredRevisions   = 10
 	concurrentReconciles = 3
 	controllerKind       = appsv1alpha1.SchemeGroupVersion.WithKind("SidecarSet")
 )
@@ -123,6 +124,7 @@ type ReconcileSidecarSet struct {
 
 // +kubebuilder:rbac:groups=apps.kruise.io,resources=sidecarsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps.kruise.io,resources=sidecarsets/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=apps,resources=controllerrevisions,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile reads that state of the cluster for a SidecarSet object and makes changes based on the state read
 // and what is in the SidecarSet.Spec
