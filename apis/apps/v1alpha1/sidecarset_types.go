@@ -125,6 +125,9 @@ type SidecarSetInjectionStrategy struct {
 	// but the injected sidecar container remains updating and running.
 	// default is false
 	Paused bool `json:"paused,omitempty"`
+	// Revision indicates the ControllerRevision name of SidecarSet that users want to inject to newly-created Pods.
+	// default is the latest revision
+	Revision string `json:"revision,omitempty"`
 }
 
 // SidecarSetUpdateStrategy indicates the strategy that the SidecarSet
@@ -194,7 +197,7 @@ type SidecarSetStatus struct {
 	// If a Pod was injected this latest revision of sidecarSet,
 	// Pod.Annotations["kruise.io/sidecarset-injected-revision"] will be
 	// '{"<sidecar-name>": "latest"}',  else it will be a specific revision name
-	LatestRevision string `json:"updateRevision,omitempty"`
+	LatestRevision string `json:"latestRevision,omitempty"`
 
 	// CollisionCount is the count of hash collisions for the SidecarSet. The SidecarSet controller
 	// uses this field as a collision avoidance mechanism when it needs to create the name for the
@@ -204,7 +207,7 @@ type SidecarSetStatus struct {
 	// RevisionHistoryLimit indicates the maximum quantity of stored revisions about SidecarSet.
 	// This value is set by SidecarSet controller.
 	// default value is 10
-	RevisionHistoryLimit int32 `json:"revisionHistoryLimit"`
+	RevisionHistoryLimit int32 `json:"revisionHistoryLimit,omitempty"`
 }
 
 // +genclient

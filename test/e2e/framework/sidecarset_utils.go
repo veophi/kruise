@@ -404,7 +404,7 @@ func (t *SidecarSetTester) ListControllerRevisions(sidecarSet *appsv1alpha1.Side
 		sidecarcontrol.SidecarSetKindName: sidecarSet.Name,
 	}})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	revisionList, err := t.c.AppsV1().ControllerRevisions(webhookutil.GetNamespace()).List(metav1.ListOptions{LabelSelector: selector.String()})
+	revisionList, err := t.c.AppsV1().ControllerRevisions(webhookutil.GetNamespace()).List(context.TODO(), metav1.ListOptions{LabelSelector: selector.String()})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	revisions := make([]*apps.ControllerRevision, len(revisionList.Items))
 	for i := range revisionList.Items {
