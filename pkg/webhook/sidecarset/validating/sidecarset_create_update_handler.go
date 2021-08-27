@@ -86,7 +86,7 @@ func (h *SidecarSetCreateUpdateHandler) validateSidecarSet(obj *appsv1alpha1.Sid
 	if err := h.Client.List(context.TODO(), sidecarSets, &client.ListOptions{}); err != nil {
 		allErrs = append(allErrs, field.InternalError(field.NewPath(""), fmt.Errorf("query other sidecarsets failed, err: %v", err)))
 	}
-	allErrs = append(allErrs, validateSidecarConflict(sidecarSets, obj, field.NewPath("spec"))...)
+	allErrs = append(allErrs, validateSidecarConflict(sidecarSets, obj, field.NewPath("spec"), &SidecarSetConfig{})...)
 	return allErrs
 }
 
@@ -243,8 +243,12 @@ func validateSidecarContainerConflict(newContainers, oldContainers []appsv1alpha
 	return allErrs
 }
 
+type SidecarSetConfig struct {
+	IsSelectorLooseOverlap bool
+}
+
 // validate the sidecarset spec.container.name, spec.initContainer.name, volume.name conflicts with others in cluster
-func validateSidecarConflict(sidecarSets *appsv1alpha1.SidecarSetList, sidecarSet *appsv1alpha1.SidecarSet, fldPath *field.Path) field.ErrorList {
+func validateSidecarConflict(sidecarSets *appsv1alpha1.SidecarSetList, sidecarSet *appsv1alpha1.SidecarSet, fldPath *field.Path, config *SidecarSetConfig) field.ErrorList {
 	allErrs := field.ErrorList{}
 
 	// record initContainer, container, volume name of other sidecarsets in cluster
@@ -293,8 +297,15 @@ func validateSidecarConflict(sidecarSets *appsv1alpha1.SidecarSetList, sidecarSe
 			if isSidecarSetNamespaceDiff(sidecarSet, other) {
 				continue
 			}
-			// if the two sidecarset will selector same pod, then judge conflict
-			if util.IsSelectorOverlapping(sidecarSet.Spec.Selector, other.Spec.Selector) {
+
+			selectorOverlap := false
+			if config.IsSelectorLooseOverlap {
+				selectorOverlap = isSelectorLooseOverlap(sidecarSet.Spec.Selector, other.Spec.Selector)
+			} else {
+				// 如果两个selector不绝对互斥，则认为是selector overlap
+				selectorOverlap = !isSelectorExclusion(sidecarSet.Spec.Selector, other.Spec.Selector)
+			}
+			if selectorOverlap {
 				allErrs = append(allErrs, field.Invalid(fldPath.Child("containers"), container.Name, fmt.Sprintf(
 					"container %v already exist in %v", container.Name, other.Name)))
 			}

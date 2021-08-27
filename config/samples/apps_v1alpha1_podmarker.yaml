@@ -1,7 +1,21 @@
 apiVersion: apps.kruise.io/v1alpha1
 kind: PodMarker
 metadata:
-  name: podmarker-sample
+  name: marker
 spec:
-  # Add fields here
-  foo: bar
+  strategy:
+    confilctPolicy: Ignore
+  matchRequirements:
+    podSelector:
+      matchLabels:
+        app: nginx
+  matchPreferences:
+    - podSelector:
+        matchLabels:
+          pod.state: working_online
+    - podReady: true
+  markItems:
+    labels:
+      upgradeStrategy: inPlace
+    annotations:
+      markUpgradeStrategyUsingPodMarker: marker

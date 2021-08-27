@@ -281,6 +281,26 @@ rules:
 - apiGroups:
   - apps.kruise.io
   resources:
+  - podmarkers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps.kruise.io
+  resources:
+  - podmarkers/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - apps.kruise.io
+  resources:
   - resourcedistributions
   verbs:
   - get

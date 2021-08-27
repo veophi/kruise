@@ -18,6 +18,8 @@ package framework
 
 import (
 	"context"
+	"fmt"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"time"
 
 	"github.com/onsi/gomega"
@@ -166,6 +168,27 @@ func (t *NodeTester) ListNodesWithFake() ([]*v1.Node, error) {
 		nodes = append(nodes, node)
 	}
 	return nodes, nil
+}
+
+func (t *NodeTester) UpdateNodeLabels(node *v1.Node) (updatedNode *v1.Node, err error) {
+	if err = wait.Poll(time.Millisecond*500, time.Second*10, func() (bool, error) {
+		updatedNode, err = t.c.CoreV1().Nodes().Get(context.TODO(), node.Name, metav1.GetOptions{})
+		if err != nil {
+			return false, fmt.Errorf("failed to get pod %q: %v", node.Name, err)
+		}
+		updatedNode.Labels = node.Labels
+		updatedNode, err = t.c.CoreV1().Nodes().Update(context.TODO(), updatedNode, metav1.UpdateOptions{})
+		if err == nil {
+			return true, nil
+		}
+		if errors.IsConflict(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to update pod %q: %v", node.Name, err)
+	}); err != nil {
+		return nil, err
+	}
+	return updatedNode, nil
 }
 
 func (t *NodeTester) ListRealNodesWithFake(tolerations []v1.Toleration) ([]*v1.Node, error) {

@@ -19,6 +19,7 @@ package util
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kubernetes/pkg/util/slice"
 )
 
@@ -217,4 +218,104 @@ func convertSelectorToMatchExpressions(selector *metav1.LabelSelector) map[strin
 	}
 
 	return matchExps
+}
+
+func IsEmptyLabelSelector(ls *metav1.LabelSelector) bool {
+	if ls == nil {
+		return true
+	}
+	return len(ls.MatchExpressions)+len(ls.MatchLabels) == 0
+}
+
+type LabelSet map[string]sets.String
+
+const (
+	SelectAll = `"@all"`
+)
+
+func newLabels() LabelSet {
+	return make(map[string]sets.String)
+}
+
+func (l *LabelSet) AddLabel(key string, values ...string) {
+	m := *l
+	if _, ok := m[key]; !ok {
+		m[key] = sets.NewString()
+	}
+	for _, v := range values {
+		m[key].Insert(v)
+	}
+}
+
+func (l *LabelSet) IsSubsetOf(superSet LabelSet) bool {
+	m := *l
+	for k, sub := range m {
+		if sup, ok := superSet[k]; ok {
+			if !sup.Has(SelectAll) && sup.Intersection(sub).Len() < sub.Len() {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (l *LabelSet) IsIntersectedWith(other LabelSet) bool {
+	m := *l
+	for k, vl := range other {
+		if vr, ok := m[k]; ok {
+			if vl.Has(SelectAll) || vr.Has(SelectAll) || vl.Intersection(vr).Len() != 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func parseLabelSelectorAsLabelSets(ls *metav1.LabelSelector) (LabelSet, LabelSet) {
+	included, excluded := newLabels(), newLabels()
+	for k, v := range ls.MatchLabels {
+		included.AddLabel(k, v)
+	}
+	for i := range ls.MatchExpressions {
+		exp := &ls.MatchExpressions[i]
+		switch exp.Operator {
+		case metav1.LabelSelectorOpIn:
+			included.AddLabel(exp.Key, exp.Values...)
+		case metav1.LabelSelectorOpNotIn:
+			excluded.AddLabel(exp.Key, exp.Values...)
+		case metav1.LabelSelectorOpExists:
+			included.AddLabel(exp.Key, SelectAll)
+		case metav1.LabelSelectorOpDoesNotExist:
+			excluded.AddLabel(exp.Key, SelectAll)
+		}
+	}
+	return included, excluded
+}
+
+// IsLabelSelectorOverlapped will return true, if two LabelSelectors select any same label.
+func IsLabelSelectorOverlapped(lls, rls *metav1.LabelSelector) bool {
+	if IsEmptyLabelSelector(lls) || IsEmptyLabelSelector(rls) {
+		return false
+	}
+
+	includedL, excludedL := parseLabelSelectorAsLabelSets(lls)
+	includedR, excludedR := parseLabelSelectorAsLabelSets(rls)
+	// If labelSelector is paradoxical
+	if includedL.IsIntersectedWith(excludedL) || includedR.IsIntersectedWith(excludedR) {
+		return false
+	}
+
+	// If "include" is empty, the bound of labelSelector will be not limited.
+	if len(includedL) == 0 && len(includedR) == 0 {
+		// If all "included" are empty, the two "excluded" must overlap
+		return len(excludedL)+len(excludedR) != 0
+	} else if len(includedL) == 0 {
+		// If includedR is a subset of excludedL, they must not overlap
+		return !includedR.IsSubsetOf(excludedL)
+	} else if len(includedR) == 0 {
+		// If includedL is a subset of excludedR, they must not overlap
+		return !includedL.IsSubsetOf(excludedR)
+	}
+
+	return includedL.IsIntersectedWith(includedR)
 }

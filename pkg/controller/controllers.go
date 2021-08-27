@@ -25,6 +25,7 @@ import (
 	"github.com/openkruise/kruise/pkg/controller/daemonset"
 	"github.com/openkruise/kruise/pkg/controller/imagepulljob"
 	"github.com/openkruise/kruise/pkg/controller/nodeimage"
+	"github.com/openkruise/kruise/pkg/controller/podmarker"
 	"github.com/openkruise/kruise/pkg/controller/podreadiness"
 	"github.com/openkruise/kruise/pkg/controller/podunavailablebudget"
 	"github.com/openkruise/kruise/pkg/controller/resourcedistribution"
@@ -55,6 +56,7 @@ func init() {
 	controllerAddFuncs = append(controllerAddFuncs, workloadspread.Add)
 	controllerAddFuncs = append(controllerAddFuncs, resourcedistribution.Add)
 	controllerAddFuncs = append(controllerAddFuncs, containerlauchpriority.Add)
+	controllerAddFuncs = append(controllerAddFuncs, podmarker.Add)
 }
 
 func SetupWithManager(m manager.Manager) error {
