@@ -19,6 +19,7 @@ package workloadspread
 import (
 	"context"
 	"encoding/json"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -96,45 +97,50 @@ func (w workloadEventHandler) Create(evt event.CreateEvent, q workqueue.RateLimi
 
 func (w workloadEventHandler) Update(evt event.UpdateEvent, q workqueue.RateLimitingInterface) {
 	var gvk schema.GroupVersionKind
-	var oldReplicas int32
-	var newReplicas int32
+	var oldGeneration int64
+	var newGeneration int64
+	var workload metav1.Object
 
 	switch evt.ObjectNew.(type) {
 	case *appsalphav1.CloneSet:
-		oldReplicas = *evt.ObjectOld.(*appsalphav1.CloneSet).Spec.Replicas
-		newReplicas = *evt.ObjectNew.(*appsalphav1.CloneSet).Spec.Replicas
+		oldGeneration = evt.ObjectOld.(*appsalphav1.CloneSet).Generation
+		newGeneration = evt.ObjectNew.(*appsalphav1.CloneSet).Generation
+		workload = evt.ObjectNew.(*appsalphav1.CloneSet)
 		gvk = controllerKruiseKindCS
 	case *appsv1.Deployment:
-		oldReplicas = *evt.ObjectOld.(*appsv1.Deployment).Spec.Replicas
-		newReplicas = *evt.ObjectNew.(*appsv1.Deployment).Spec.Replicas
+		oldGeneration = evt.ObjectOld.(*appsv1.Deployment).Generation
+		newGeneration = evt.ObjectNew.(*appsv1.Deployment).Generation
+		workload = evt.ObjectNew.(*appsv1.Deployment)
 		gvk = controllerKindDep
 	case *appsv1.ReplicaSet:
-		oldReplicas = *evt.ObjectOld.(*appsv1.ReplicaSet).Spec.Replicas
-		newReplicas = *evt.ObjectNew.(*appsv1.ReplicaSet).Spec.Replicas
+		oldGeneration = evt.ObjectOld.(*appsv1.ReplicaSet).Generation
+		newGeneration = evt.ObjectNew.(*appsv1.ReplicaSet).Generation
+		workload = evt.ObjectNew.(*appsv1.ReplicaSet)
 		gvk = controllerKindRS
 	case *batchv1.Job:
-		oldReplicas = *evt.ObjectOld.(*batchv1.Job).Spec.Parallelism
-		newReplicas = *evt.ObjectNew.(*batchv1.Job).Spec.Parallelism
+		oldGeneration = evt.ObjectOld.(*batchv1.Job).Generation
+		newGeneration = evt.ObjectNew.(*batchv1.Job).Generation
+		workload = evt.ObjectNew.(*batchv1.Job)
 		gvk = controllerKindJob
 	default:
 		return
 	}
 
 	// workload replicas changed, and reconcile corresponding WorkloadSpread
-	if oldReplicas != newReplicas {
+	if oldGeneration != newGeneration {
 		workloadNsn := types.NamespacedName{
 			Namespace: evt.ObjectNew.GetNamespace(),
 			Name:      evt.ObjectNew.GetName(),
 		}
-		ws, err := w.getWorkloadSpreadForWorkload(workloadNsn, gvk)
+		ws, err := w.getWorkloadSpreadForWorkload(workloadNsn, gvk, workload)
 		if err != nil {
 			klog.Errorf("unable to get WorkloadSpread related with %s (%s/%s), err: %v",
 				gvk.Kind, workloadNsn.Namespace, workloadNsn.Name, err)
 			return
 		}
 		if ws != nil {
-			klog.V(3).Infof("%s (%s/%s) changed replicas from %d to %d managed by WorkloadSpread (%s/%s)",
-				gvk.Kind, workloadNsn.Namespace, workloadNsn.Name, oldReplicas, newReplicas, ws.GetNamespace(), ws.GetName())
+			klog.V(3).Infof("%s (%s/%s) changed generation from %d to %d managed by WorkloadSpread (%s/%s)",
+				gvk.Kind, workloadNsn.Namespace, workloadNsn.Name, oldGeneration, newGeneration, ws.GetNamespace(), ws.GetName())
 			nsn := types.NamespacedName{Namespace: ws.GetNamespace(), Name: ws.GetName()}
 			q.Add(reconcile.Request{NamespacedName: nsn})
 		}
@@ -150,16 +156,21 @@ func (w workloadEventHandler) Generic(evt event.GenericEvent, q workqueue.RateLi
 
 func (w *workloadEventHandler) handleWorkload(q workqueue.RateLimitingInterface,
 	obj client.Object, action EventAction) {
+	var workload metav1.Object
 	var gvk schema.GroupVersionKind
 	switch obj.(type) {
 	case *appsalphav1.CloneSet:
 		gvk = controllerKruiseKindCS
+		workload = obj.(*appsalphav1.CloneSet)
 	case *appsv1.Deployment:
 		gvk = controllerKindDep
+		workload = obj.(*appsv1.Deployment)
 	case *appsv1.ReplicaSet:
 		gvk = controllerKindRS
+		workload = obj.(*appsv1.ReplicaSet)
 	case *batchv1.Job:
 		gvk = controllerKindJob
+		workload = obj.(*batchv1.Job)
 	default:
 		return
 	}
@@ -168,7 +179,7 @@ func (w *workloadEventHandler) handleWorkload(q workqueue.RateLimitingInterface,
 		Namespace: obj.GetNamespace(),
 		Name:      obj.GetName(),
 	}
-	ws, err := w.getWorkloadSpreadForWorkload(workloadNsn, gvk)
+	ws, err := w.getWorkloadSpreadForWorkload(workloadNsn, gvk, workload)
 	if err != nil {
 		klog.Errorf("unable to get WorkloadSpread related with %s (%s/%s), err: %v",
 			gvk.Kind, workloadNsn.Namespace, workloadNsn.Name, err)
@@ -184,7 +195,7 @@ func (w *workloadEventHandler) handleWorkload(q workqueue.RateLimitingInterface,
 
 func (w *workloadEventHandler) getWorkloadSpreadForWorkload(
 	workloadNamespaceName types.NamespacedName,
-	gvk schema.GroupVersionKind) (*appsalphav1.WorkloadSpread, error) {
+	gvk schema.GroupVersionKind, workload metav1.Object) (*appsalphav1.WorkloadSpread, error) {
 	wsList := &appsalphav1.WorkloadSpreadList{}
 	listOptions := &client.ListOptions{Namespace: workloadNamespaceName.Namespace}
 	if err := w.List(context.TODO(), wsList, listOptions); err != nil {
@@ -210,6 +221,19 @@ func (w *workloadEventHandler) getWorkloadSpreadForWorkload(
 
 		if targetRef.Kind == gvk.Kind && targetGV.Group == gvk.Group && targetRef.Name == workloadNamespaceName.Name {
 			return &ws, nil
+		}
+
+		if workload != nil && gvk.Kind == controllerKindRS.Kind {
+			ownerRef := metav1.GetControllerOf(workload)
+			if ownerRef != nil {
+				klog.V(3).Infof("ReplicaSet(%v): OwnerRef %v, WorkloadSpread(%s)", workloadNamespaceName, *ownerRef, ws.Name)
+			} else {
+				klog.V(3).Infof("ReplicaSet(%v): OwnerRef nil, WorkloadSpread(%s)", workloadNamespaceName, ws.Name)
+			}
+			if ownerRef != nil && ownerRef.Kind == controllerKindDep.Kind && ownerRef.Kind == targetRef.Kind &&
+				ownerRef.APIVersion == targetRef.APIVersion && ownerRef.Name == targetRef.Name {
+				return &ws, nil
+			}
 		}
 	}
 

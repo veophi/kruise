@@ -138,6 +138,12 @@ spec:
                 description: ObservedGeneration is the most recent generation observed for this WorkloadSpread. It corresponds to the WorkloadSpread's generation, which is updated on mutation by the API Server.
                 format: int64
                 type: integer
+              observedWorkloadGeneration:
+                format: int64
+                type: integer
+              observedWorkloadUID:
+                description: UID is a type that holds unique ID values, including UUIDs.  Because we don't ONLY use UUIDs, this is an alias to string.  Being a type captures intent and helps make sure that UIDs and names do not get conflated.
+                type: string
               subsetStatuses:
                 description: Contains the status of each subset. Each element in this array represents one subset
                 items:

@@ -338,7 +338,7 @@ func TestGetWorkloadSpreadForCloneSet(t *testing.T) {
 				Name:      cs.getCloneSet().Name,
 			}
 			handler := workloadEventHandler{Reader: fakeClient}
-			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKruiseKindCS)
+			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKruiseKindCS, nil)
 			expectTopology := cs.expectWorkloadSpread()
 
 			if expectTopology == nil {
@@ -464,7 +464,7 @@ func TestGetWorkloadSpreadForDeployment(t *testing.T) {
 				Name:      cs.getDeployment().Name,
 			}
 			handler := workloadEventHandler{Reader: fakeClient}
-			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKindDep)
+			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKindDep, nil)
 			expectTopology := cs.expectWorkloadSpread()
 
 			if expectTopology == nil {
@@ -566,7 +566,7 @@ func TestGetWorkloadSpreadForJob(t *testing.T) {
 				Name:      cs.getJob().Name,
 			}
 			handler := workloadEventHandler{Reader: fakeClient}
-			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKindJob)
+			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKindJob, nil)
 			expectTopology := cs.expectWorkloadSpread()
 
 			if expectTopology == nil {
@@ -692,7 +692,7 @@ func TestGetWorkloadSpreadForReplicaSet(t *testing.T) {
 				Name:      cs.getReplicaset().Name,
 			}
 			handler := workloadEventHandler{Reader: fakeClient}
-			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKindRS)
+			workloadSpread, _ := handler.getWorkloadSpreadForWorkload(nsn, controllerKindRS, nil)
 			expectTopology := cs.expectWorkloadSpread()
 
 			if expectTopology == nil {

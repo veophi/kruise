@@ -1487,7 +1487,7 @@ func TestUpdateSubsetSequence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error group pods")
 	}
-	status, _ := r.calculateWorkloadSpreadStatus(workloadSpread, subsetsPods, 5)
+	status, _ := r.calculateWorkloadSpreadStatus(workloadSpread, subsetsPods, &metav1.ObjectMeta{}, 5)
 	if status == nil {
 		t.Fatalf("error get WorkloadSpread status")
 	} else {

@@ -20,6 +20,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
@@ -119,6 +120,10 @@ type WorkloadSpreadStatus struct {
 	// WorkloadSpread's generation, which is updated on mutation by the API Server.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	ObservedWorkloadGeneration int64 `json:"observedWorkloadGeneration,omitempty"`
+
+	ObservedWorkloadUID types.UID `json:"observedWorkloadUID,omitempty"`
 
 	// ObservedGeneration is the most recent replicas of target workload observed for this WorkloadSpread.
 	//ObservedWorkloadReplicas int32 `json:"observedWorkloadReplicas"`

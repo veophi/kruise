@@ -19,6 +19,9 @@ package workloadspread
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/integer"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -232,6 +235,17 @@ func (h *Handler) HandlePodDeletion(pod *corev1.Pod, operation Operation) error 
 		return err
 	}
 
+	workloadObject, _, err := h.getWorkload(matchedWS, pod)
+	if err != nil || workloadObject == nil || workloadObject.GetUID() != matchedWS.Status.ObservedWorkloadUID {
+		return err
+	}
+
+	if matchedWS.Status.ObservedWorkloadUID == workloadObject.GetUID() &&
+		matchedWS.Status.ObservedWorkloadGeneration < workloadObject.GetGeneration() {
+		return fmt.Errorf("pod (%s/%s) is waiting WorkloadSpread (%s/%s) to reconcile, observed %v, actual %v",
+			pod.Namespace, pod.Name, matchedWS.Namespace, matchedWS.Name, matchedWS.Status.ObservedWorkloadGeneration, workloadObject.GetGeneration())
+	}
+
 	defer func() {
 		klog.V(3).Infof("Cost of handling pod deletion by WorkloadSpread (%s/%s) is %v",
 			matchedWS.Namespace, matchedWS.Name, time.Since(start))
@@ -313,7 +327,10 @@ func (h *Handler) acquireSuitableSubset(matchedWS *appsv1alpha1.WorkloadSpread,
 		// check whether WorkloadSpread has suitable subset for the pod
 		// 1. changed indicates whether workloadSpread status changed
 		// 2. suitableSubset is matched subset for the pod
-		changed, suitableSubset, generatedUID = h.updateSubsetForPod(wsClone, pod, injectWS, operation)
+		changed, suitableSubset, generatedUID, err = h.updateSubsetForPod(wsClone, pod, injectWS, operation)
+		if err != nil {
+			return err
+		}
 		if !changed {
 			return nil
 		}
@@ -398,24 +415,32 @@ func (h *Handler) tryToGetTheLatestMatchedWS(matchedWS *appsv1alpha1.WorkloadSpr
 // 3. generatedUID(types.UID) indicates which workloadSpread generate a UID for identifying Pod without a full name.
 func (h *Handler) updateSubsetForPod(ws *appsv1alpha1.WorkloadSpread,
 	pod *corev1.Pod, injectWS *InjectWorkloadSpread, operation Operation) (
-	bool, *appsv1alpha1.WorkloadSpreadSubsetStatus, string) {
+	bool, *appsv1alpha1.WorkloadSpreadSubsetStatus, string, error) {
 	var suitableSubset *appsv1alpha1.WorkloadSpreadSubsetStatus
 	var generatedUID string
+	var err error
 
 	switch operation {
 	case CreateOperation:
+		oldWS := ws.DeepCopy()
+		ws, err = h.recalculateWorkloadStatus(ws, pod)
+		if err != nil || ws == nil {
+			klog.Errorf("Recalculate workloadSpread(%s/%s) failed, err: %v", oldWS.Namespace, oldWS.Name, err)
+			return false, nil, "", err
+		}
+		klog.V(3).Infof("At webhook: %v", MakeStatusChangedLog(oldWS, &ws.Status))
+
 		if pod.Name != "" {
 			// pod is already in CreatingPods/DeletingPods List, then return
 			if isRecord, subset := isPodRecordedInSubset(ws, pod.Name); isRecord {
-				return false, subset, ""
+				return false, subset, "", nil
 			}
 		}
-
 		suitableSubset = h.getSuitableSubset(ws)
 		if suitableSubset == nil {
 			klog.V(5).Infof("WorkloadSpread (%s/%s) don't have a suitable subset for Pod (%s)",
 				ws.Namespace, ws.Name, pod.Name)
-			return false, nil, ""
+			return false, nil, "", nil
 		}
 		if suitableSubset.CreatingPods == nil {
 			suitableSubset.CreatingPods = map[string]metav1.Time{}
@@ -434,13 +459,13 @@ func (h *Handler) updateSubsetForPod(ws *appsv1alpha1.WorkloadSpread,
 	case DeleteOperation, EvictionOperation:
 		// pod is already in DeletingPods/CreatingPods List, then return
 		if isRecord, _ := isPodRecordedInSubset(ws, pod.Name); isRecord {
-			return false, nil, ""
+			return false, nil, "", nil
 		}
 
 		suitableSubset = getSpecificSubset(ws, injectWS.Subset)
 		if suitableSubset == nil {
 			klog.V(5).Infof("Pod (%s/%s) matched WorkloadSpread (%s) not found Subset(%s)", ws.Namespace, pod.Name, ws.Name, injectWS.Subset)
-			return false, nil, ""
+			return false, nil, "", nil
 		}
 		if suitableSubset.DeletingPods == nil {
 			suitableSubset.DeletingPods = map[string]metav1.Time{}
@@ -450,7 +475,7 @@ func (h *Handler) updateSubsetForPod(ws *appsv1alpha1.WorkloadSpread,
 			suitableSubset.MissingReplicas++
 		}
 	default:
-		return false, nil, ""
+		return false, nil, "", nil
 	}
 
 	// update subset status
@@ -461,7 +486,106 @@ func (h *Handler) updateSubsetForPod(ws *appsv1alpha1.WorkloadSpread,
 		}
 	}
 
-	return true, suitableSubset, generatedUID
+	return true, suitableSubset, generatedUID, nil
+}
+
+func (h *Handler) getWorkload(ws *appsv1alpha1.WorkloadSpread, pod *corev1.Pod) (metav1.Object, int32, error) {
+	var err error
+	var replicas int32
+	var object metav1.Object
+
+	targetRef := ws.Spec.TargetReference
+	switch targetRef.Kind {
+	case controllerKindDep.Kind:
+		controllerRef := metav1.GetControllerOf(pod)
+		if controllerRef == nil || controllerRef.Kind != controllerKindRS.Kind {
+			return nil, 0, nil
+		}
+		rs := &appsv1.ReplicaSet{}
+		err = h.Client.Get(context.TODO(), types.NamespacedName{Namespace: pod.Namespace, Name: controllerRef.Name}, rs)
+		if err == nil {
+			object = rs
+			replicas = *rs.Spec.Replicas
+		}
+	case controllerKruiseKindCS.Kind:
+		cs := &appsv1alpha1.CloneSet{}
+		err = h.Client.Get(context.TODO(), types.NamespacedName{Namespace: pod.Namespace, Name: targetRef.Name}, cs)
+		if err == nil {
+			object = cs
+			replicas = *cs.Spec.Replicas
+		}
+	case controllerKindRS.Kind:
+		rs := &appsv1.ReplicaSet{}
+		err = h.Client.Get(context.TODO(), types.NamespacedName{Namespace: pod.Namespace, Name: targetRef.Name}, rs)
+		if err == nil {
+			object = rs
+			replicas = *rs.Spec.Replicas
+		}
+	case controllerKindJob.Kind:
+		job := &batchv1.Job{}
+		err = h.Client.Get(context.TODO(), types.NamespacedName{Namespace: pod.Namespace, Name: targetRef.Name}, job)
+		if err == nil {
+			object = job
+			replicas = *job.Spec.Parallelism
+		}
+	default:
+		return nil, 0, fmt.Errorf("unsupported targetReference type")
+	}
+
+	if err != nil {
+		klog.Errorf("WorkloadSpread(%s/%s) get workload object error: %v, replicas: %v", ws.Namespace, ws.Name, err, replicas)
+		if !errors.IsNotFound(err) {
+			return nil, 0, err
+		}
+		return nil, 0, nil
+	}
+
+	return object, replicas, nil
+}
+
+func (h *Handler) recalculateWorkloadStatus(ws *appsv1alpha1.WorkloadSpread, pod *corev1.Pod) (*appsv1alpha1.WorkloadSpread, error) {
+	workloadObject, workloadReplicas, err := h.getWorkload(ws, pod)
+	klog.V(3).Infof("getWorkload Results: workloadObject %v, replicas %v, err %v", workloadObject, workloadReplicas, err)
+	if err != nil || workloadObject == nil {
+		return nil, err
+	}
+
+	for i := range ws.Spec.Subsets {
+		subset := &ws.Spec.Subsets[i]
+		if subset.MaxReplicas == nil {
+			continue
+		}
+
+		subsetMaxReplicas, err := intstr.GetValueFromIntOrPercent(subset.MaxReplicas, int(workloadReplicas), true)
+		if err != nil || subsetMaxReplicas < 0 {
+			klog.Errorf("failed to get maxReplicas value from subset (%s) of WorkloadSpread (%s/%s)",
+				subset.Name, ws.Namespace, ws.Name)
+			return nil, nil
+		}
+
+		if len(ws.Status.SubsetStatuses) < i+1 {
+			ws.Status.SubsetStatuses = append(ws.Status.SubsetStatuses, appsv1alpha1.WorkloadSpreadSubsetStatus{
+				Name: subset.Name,
+			})
+		}
+		subsetStatus := &ws.Status.SubsetStatuses[i]
+
+		var realReplicas int32
+		if workloadObject.GetUID() != ws.Status.ObservedWorkloadUID {
+			subsetStatus.Replicas = 0
+			subsetStatus.Conditions = nil
+			subsetStatus.CreatingPods = nil
+			subsetStatus.DeletingPods = nil
+			subsetStatus.MissingReplicas = int32(subsetMaxReplicas)
+		} else {
+			realReplicas = subsetStatus.Replicas + subsetStatus.MissingReplicas + int32(len(subsetStatus.CreatingPods)-len(subsetStatus.DeletingPods))
+			diff := int32(subsetMaxReplicas) - realReplicas
+			subsetStatus.MissingReplicas = integer.Int32Max(subsetStatus.MissingReplicas+diff, 0)
+		}
+	}
+
+	ws.Status.ObservedWorkloadUID = workloadObject.GetUID()
+	return ws, nil
 }
 
 // return two parameters
@@ -620,4 +744,56 @@ func (h Handler) isReferenceEqual(target *appsv1alpha1.TargetReference, owner *m
 	}
 
 	return targetGv.Group == ownerGv.Group && target.Kind == owner.Kind && target.Name == owner.Name
+}
+
+func MakeStatusChangedLog(ws *appsv1alpha1.WorkloadSpread, status *appsv1alpha1.WorkloadSpreadStatus) string {
+	oldSubsetStatuses := ws.Status.SubsetStatuses
+	oldSubsetStatusMap := make(map[string]*appsv1alpha1.WorkloadSpreadSubsetStatus, len(oldSubsetStatuses))
+	for i := range oldSubsetStatuses {
+		oldSubsetStatusMap[oldSubsetStatuses[i].Name] = &oldSubsetStatuses[i]
+	}
+
+	log := fmt.Sprintf("WorkloadSpread (%s/%s) changes Status:", ws.Namespace, ws.Name)
+
+	log += fmt.Sprintf(" (<ObservedWorkloadUID: %v -> %v>;", ws.Status.ObservedWorkloadUID, status.ObservedWorkloadUID)
+
+	log += fmt.Sprintf(" <ObservedWorkloadGeneration: %v -> %v>)", ws.Status.ObservedWorkloadGeneration, status.ObservedWorkloadGeneration)
+
+	for i, subset := range ws.Spec.Subsets {
+		oldStatus, ok := oldSubsetStatusMap[subset.Name]
+		if !ok {
+			continue
+		}
+		newStatus := status.SubsetStatuses[i]
+
+		log += fmt.Sprintf(" (<subset name: %s>", subset.Name)
+
+		if oldStatus.Replicas != newStatus.Replicas {
+			log += fmt.Sprintf(" <Replicas: %d -> %d>", oldStatus.Replicas, newStatus.Replicas)
+		} else {
+			log += fmt.Sprintf(" <Replicas: %d>", newStatus.Replicas)
+		}
+
+		if oldStatus.MissingReplicas != newStatus.MissingReplicas {
+			log += fmt.Sprintf(" <missingReplicas: %d -> %d>", oldStatus.MissingReplicas, newStatus.MissingReplicas)
+		} else {
+			log += fmt.Sprintf(" <missingReplicas: %d>", newStatus.MissingReplicas)
+		}
+
+		if len(oldStatus.CreatingPods) != len(newStatus.CreatingPods) {
+			log += fmt.Sprintf(" <creatingPods length: %d -> %d>", len(oldStatus.CreatingPods), len(newStatus.CreatingPods))
+		} else {
+			log += fmt.Sprintf(" <creatingPods length: %d>", len(newStatus.CreatingPods))
+		}
+
+		if len(oldStatus.DeletingPods) != len(newStatus.DeletingPods) {
+			log += fmt.Sprintf(" <deletingPods length: %d -> %d>", len(oldStatus.DeletingPods), len(newStatus.DeletingPods))
+		} else {
+			log += fmt.Sprintf(" <deletingPods length: %d>", len(newStatus.DeletingPods))
+		}
+
+		log += ")"
+	}
+
+	return log
 }
