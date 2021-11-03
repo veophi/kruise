@@ -125,7 +125,7 @@ type PodMarkerStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=pm
 // +kubebuilder:printcolumn:name="Desired",type="integer",JSONPath=".status.desired",description="The desired number of pods that should be marked."
-// +kubebuilder:printcolumn:name="Succeeded",type="integer",JSONPath=".status.active",description="The number of pods that have been marked successful."
+// +kubebuilder:printcolumn:name="Succeeded",type="integer",JSONPath=".status.succeeded",description="The number of pods that have been marked successful."
 // +kubebuilder:printcolumn:name="Failed",type="integer",JSONPath=".status.failed",description="The number of failures when marking."
 // +kubebuilder:printcolumn:name="AGE",type="date",JSONPath=".metadata.creationTimestamp",description="CreationTimestamp is a timestamp representing the server time when this object was created. It is not guaranteed to be set in happens-before order across separate operations. Clients may not set this value. It is represented in RFC3339 form and is in UTC."
 

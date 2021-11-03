@@ -81,9 +81,7 @@ func (p *enqueueRequestForNode) getPodMarkers(node *v1.Node) ([]*appsv1alpha1.Po
 	for i := range podMarkers.Items {
 		pm := &podMarkers.Items[i]
 		selector := pm.Spec.MatchRequirements.NodeSelector
-		if isEmptySelector(selector) {
-			continue
-		}
+
 		matched, err := objectMatchesLabelSelector(node, selector)
 		if err != nil {
 			return nil, err

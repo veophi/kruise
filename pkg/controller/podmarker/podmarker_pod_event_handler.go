@@ -59,12 +59,14 @@ func (p *enqueueRequestForPod) addPod(q workqueue.RateLimitingInterface, evt eve
 		return
 	}
 	podMarkers, err := p.getPodMarkers(pod)
-	klog.V(3).Infof("Handle pod(%s/%s) create event, get matched PodMarker(%d): %v",
-		pod.Namespace, pod.Name, len(podMarkers), podMarkers)
 	if err != nil {
 		klog.Errorf("Failed to get PodMarkers for pod(%v/%v) at create event: %v", pod.Namespace, pod.Name, err)
 		return
 	}
+
+	klog.V(3).Infof("Handle pod(%s/%s) create event, get matched %d PodMarkers: %v",
+		pod.Namespace, pod.Name, len(podMarkers), podMarkers)
+
 	for _, markerName := range podMarkers {
 		q.Add(reconcile.Request{NamespacedName: types.NamespacedName{
 			Namespace: pod.Namespace,
@@ -77,10 +79,10 @@ func (p *enqueueRequestForPod) updatePod(q workqueue.RateLimitingInterface, evt 
 	oldPod, okOld := evt.ObjectOld.(*v1.Pod)
 	newPod, okNew := evt.ObjectNew.(*v1.Pod)
 	if !okOld || !okNew || !kubecontroller.IsPodActive(newPod) ||
-		oldPod.Spec.NodeName == newPod.Spec.NodeName &&
+		(oldPod.Spec.NodeName == newPod.Spec.NodeName &&
 			podutil.IsPodReady(oldPod) == podutil.IsPodReady(newPod) &&
 			reflect.DeepEqual(oldPod.Labels, newPod.Labels) &&
-			reflect.DeepEqual(oldPod.Annotations, newPod.Annotations) {
+			reflect.DeepEqual(oldPod.Annotations, newPod.Annotations)) {
 		return
 	}
 
@@ -89,14 +91,15 @@ func (p *enqueueRequestForPod) updatePod(q workqueue.RateLimitingInterface, evt 
 		klog.Errorf("Failed to get PodMarkers for pod(%v/%v) at update event: %v", newPod.Namespace, newPod.Name, err)
 		return
 	}
-	oldMarkers := getPodAnnotationMarkers(oldPod).List()
-	newMarkers := getPodAnnotationMarkers(newPod).List()
+	oldMarkers := getMarkersWhoMarkedPod(oldPod).List()
+	newMarkers := getMarkersWhoMarkedPod(newPod).List()
 	podMarkers := sets.NewString(matchedMarkers...).
 		Union(sets.NewString(oldMarkers...)).
 		Union(sets.NewString(newMarkers...)).List()
 
-	klog.V(3).Infof("Handle pod(%s/%s) update event, get matched PodMarker(%d): %v",
+	klog.V(3).Infof("Handle pod(%s/%s) update event, get matched %d PodMarkers: %v",
 		newPod.Namespace, newPod.Name, len(podMarkers), podMarkers)
+
 	for _, markerName := range podMarkers {
 		q.Add(reconcile.Request{NamespacedName: types.NamespacedName{
 			Namespace: newPod.Namespace,
@@ -110,7 +113,8 @@ func (p *enqueueRequestForPod) deletePod(q workqueue.RateLimitingInterface, evt 
 	if !ok {
 		return
 	}
-	podMarkers := getPodAnnotationMarkers(pod).List()
+
+	podMarkers := getMarkersWhoMarkedPod(pod).List()
 	klog.V(3).Infof("Handle pod(%s/%s) delete event, get matched PodMarker(%d): %v",
 		pod.Namespace, pod.Name, len(podMarkers), podMarkers)
 	for _, markerName := range podMarkers {
@@ -126,7 +130,7 @@ func (p *enqueueRequestForPod) getPodMarkers(pod *v1.Pod) ([]string, error) {
 	if err := p.client.List(context.TODO(), podMarkers, &client.ListOptions{Namespace: pod.Namespace}); err != nil {
 		return nil, err
 	}
-	// get the corresponding node
+
 	var node *v1.Node
 	if len(pod.Spec.NodeName) != 0 {
 		node = &v1.Node{}
@@ -155,14 +159,8 @@ func matchesPodMarker(pod *v1.Pod, node *v1.Node, marker *appsv1alpha1.PodMarker
 	klog.V(3).Infof("pod(%s/%s) isPodActive %v, nodeName %v, matchRequirement %v",
 		pod.Namespace, pod.Name, kubecontroller.IsPodActive(pod), pod.Spec.NodeName, marker.Spec.MatchRequirements)
 
-	//if !kubecontroller.IsPodActive(pod) {
-	//	return false, nil
-	//}
 	podSelector := marker.Spec.MatchRequirements.PodSelector
 	nodeSelector := marker.Spec.MatchRequirements.NodeSelector
-	if isEmptySelector(podSelector) && isEmptySelector(nodeSelector) {
-		return false, nil
-	}
 	if podSelector != nil {
 		if ok, err := objectMatchesLabelSelector(pod, podSelector); !ok || err != nil {
 			return false, err

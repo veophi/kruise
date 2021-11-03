@@ -15,6 +15,7 @@ package validating
 
 import (
 	"fmt"
+	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
 	"reflect"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -37,6 +38,7 @@ var (
 	supportedGKList = []schema.GroupKind{
 		{Group: "", Kind: "Secret"},
 		{Group: "", Kind: "ConfigMap"},
+		{Group: appsv1alpha1.SchemeGroupVersion.Group, Kind: "PodMarker"},
 	}
 
 	// ForbiddenNamespaces is a list that contains all forbidden namespaces

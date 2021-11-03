@@ -35,7 +35,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	controllerutil "k8s.io/kubernetes/pkg/controller"
@@ -158,9 +157,9 @@ func (r *ReconcilePodMarker) Reconcile(_ context.Context, request reconcile.Requ
 	return result, err
 }
 
-func (r *ReconcilePodMarker) doReconcile(marker *appsv1alpha1.PodMarker) (reconcile.Result, error) {
+func (r *ReconcilePodMarker) doReconcile(podMarker *appsv1alpha1.PodMarker) (reconcile.Result, error) {
 	// for the comparison before updating marker.status
-	oldStatus := marker.Status.DeepCopy()
+	marker := podMarker.DeepCopy()
 
 	// list related pods and nodes
 	// matchedPods: the pods satisfying spec.MatchRequirements
@@ -175,7 +174,7 @@ func (r *ReconcilePodMarker) doReconcile(marker *appsv1alpha1.PodMarker) (reconc
 		return reconcile.Result{}, nil
 	}
 
-	// calculate the number of pods that should be marked
+	// calculate the number of pods that should be marked by this PodMarker
 	replicas, err := intstr.GetValueFromIntOrPercent(intstr.ValueOrDefault(marker.Spec.Strategy.Replicas, intstr.FromInt(1<<31-1)), len(matchedPods), true)
 	if err != nil {
 		klog.Errorf("Failed to parse .Spec.Strategy.Replicas, err: %v, name = %s/%s", err, marker.Namespace, marker.Name)
@@ -196,25 +195,24 @@ func (r *ReconcilePodMarker) doReconcile(marker *appsv1alpha1.PodMarker) (reconc
 		len(podsNeedToMark), listPodName(podsNeedToMark), len(podsNeedToClean), listPodName(podsNeedToClean))
 
 	// mark pods
-	errList := field.ErrorList{}
-	if err := r.markPods(podsNeedToMark, marker); err != nil {
-		errList = append(errList, field.InternalError(field.NewPath("markPods"), err))
+	if err = r.markPods(podsNeedToMark, marker); err != nil {
+		return reconcile.Result{}, err
 	}
 
 	// clean marks for pods
-	if err := r.cleanPods(podsNeedToClean, marker); err != nil {
-		errList = append(errList, field.InternalError(field.NewPath("cleanPods"), err))
+	if err = r.cleanPods(podsNeedToClean, marker); err != nil {
+		return reconcile.Result{}, err
 	}
 
 	// update podmarker status
 	calculatePodMarkerStatus(marker)
-	if !reflect.DeepEqual(marker.Status, oldStatus) {
-		if err := r.updatePodMarkerStatus(marker); err != nil {
-			errList = append(errList, field.InternalError(field.NewPath("updateStatus"), err))
+	if !reflect.DeepEqual(marker.Status, podMarker.Status) {
+		if err = r.updatePodMarkerStatus(marker); err != nil {
+			return reconcile.Result{}, err
 		}
 	}
 
-	return reconcile.Result{}, errList.ToAggregate()
+	return reconcile.Result{}, nil
 }
 
 func (r *ReconcilePodMarker) updatePodMarkerStatus(marker *appsv1alpha1.PodMarker) error {
@@ -238,14 +236,13 @@ func (r *ReconcilePodMarker) listRelatedResources(marker *appsv1alpha1.PodMarker
 	podSelector, err := metav1.LabelSelectorAsSelector(requirements.PodSelector)
 	if err != nil {
 		// this is an unexpected error that should be validated at webhook.
-		// this error should be returned, because it's a non transient error.
-		klog.Errorf("Failed to parse requirements.PodSelector for PodMarker(%s/%s), err: %v", marker.Namespace, marker.Name, err)
+		// this error should not be returned, because it's a non transient error.
+		klog.Errorf("Failed to parse requirements.PodSelector of PodMarker(%s/%s), err: %v", marker.Namespace, marker.Name, err)
 		return nil, nil, nil, nil
 	}
 	nodeSelector, err := metav1.LabelSelectorAsSelector(requirements.NodeSelector)
 	if err != nil {
-		// same as the above
-		klog.Errorf("Failed to parse requirements.NodeSelector for PodMarker(%s/%s), err: %v", marker.Namespace, marker.Name, err)
+		klog.Errorf("Failed to parse requirements.NodeSelector of PodMarker(%s/%s), err: %v", marker.Namespace, marker.Name, err)
 		return nil, nil, nil, nil
 	}
 
@@ -289,20 +286,17 @@ func (r *ReconcilePodMarker) listRelatedResources(marker *appsv1alpha1.PodMarker
 	podToNode := make(map[string]*corev1.Node)
 	for i := range podList.Items {
 		pod := &podList.Items[i]
-		if pod.Annotations == nil { // make sure pod.Annotation is not nil
-			pod.Annotations = make(map[string]string)
-		}
-
 		if !controllerutil.IsPodActive(pod) {
 			klog.V(3).Infof("pod(%s/%s) is not active, then drop it", pod.Namespace, pod.Name)
 			continue
-		} else if isMatched(pod) {
+		}
+
+		if isMatched(pod) {
 			matchedPods = append(matchedPods, pod)
 			podToNode[pod.Name] = nameToNode[pod.Spec.NodeName]
-			continue
 		} else {
-			// unmatchedPods only focus on the related pods
-			usedMarkers := getPodAnnotationMarkers(pod)
+			// unmatchedPods only care about the related pods with this PodMarker
+			usedMarkers := getMarkersWhoMarkedPod(pod)
 			if usedMarkers.Has(marker.Name) {
 				unmatchedPods = append(unmatchedPods, pod)
 			}
@@ -313,31 +307,27 @@ func (r *ReconcilePodMarker) listRelatedResources(marker *appsv1alpha1.PodMarker
 
 func (r *ReconcilePodMarker) markPods(pods []*corev1.Pod, marker *appsv1alpha1.PodMarker) error {
 	for _, p := range pods {
-		pod := p.DeepCopy()
-		patch := getMarkPatch(pod, marker)
-		if err := r.Patch(context.TODO(), pod, client.RawPatch(types.MergePatchType, patch)); err != nil {
+		pod := addMarks(p, marker)
+		if err := r.Client.Update(context.TODO(), pod); err != nil {
 			klog.Errorf("Failed to updates pod(%s/%s) when PodMarker(%s/%s) marking the pod, %v",
 				pod.Namespace, pod.Name, marker.Namespace, marker.Name, err)
 			return err
 		}
 		marker.Status.Succeeded++
-		klog.V(3).Infof("PodMarker(%s/%s) marked pod(%s/%s) successfully",
-			marker.Namespace, marker.Name, pod.Namespace, pod.Name)
+		klog.V(3).Infof("PodMarker(%s/%s) marked pod(%s/%s) successfully", marker.Namespace, marker.Name, pod.Namespace, pod.Name)
 	}
 	return nil
 }
 
 func (r *ReconcilePodMarker) cleanPods(pods []*corev1.Pod, marker *appsv1alpha1.PodMarker) error {
 	for _, p := range pods {
-		pod := p.DeepCopy()
-		patch := getCleanPatch(pod, marker)
-		if err := r.Patch(context.TODO(), pod, client.RawPatch(types.MergePatchType, patch)); err != nil {
-			klog.Errorf("Failed to updates pod(%s/%s) when PodMarker(%s/%s) cleaning the pod, %v",
+		pod := removeMarks(p, marker)
+		if err := r.Client.Update(context.TODO(), pod); err != nil {
+			klog.Errorf("Failed to updates pod(%s/%s) when PodMarker(%s/%s) cleaning the marks, %v",
 				pod.Namespace, pod.Name, marker.Namespace, marker.Name, err)
 			return err
 		}
-		klog.V(3).Infof("PodMarker(%s/%s) cleaned marks for pod(%s/%s) successfully",
-			marker.Namespace, marker.Name, pod.Namespace, pod.Name)
+		klog.V(3).Infof("PodMarker(%s/%s) remove marks for pod(%s/%s) successfully", marker.Namespace, marker.Name, pod.Namespace, pod.Name)
 	}
 	return nil
 }
@@ -348,14 +338,14 @@ func distinguishPods(matchedPods, unmatchedPods []*corev1.Pod, marker *appsv1alp
 	marker.Status.Desired = 0
 	marker.Status.Succeeded = 0
 	for _, pod := range matchedPods {
-		conflict := hasConflict(pod, &marker.Spec.MarkItems, marker.Spec.Strategy.ConflictPolicy)
-		usedMarkers := getPodAnnotationMarkers(pod)
+		usedMarkers := getMarkersWhoMarkedPod(pod)
+		conflict := isConflicting(pod, &marker.Spec.MarkItems, marker.Spec.Strategy.ConflictPolicy)
 
 		if !conflict && int(marker.Status.Desired) < desired {
 			marker.Status.Desired++
 			// ignore the pod that needn't to be updated.
-			// in case of that the pod has been already marked by this podmarker,
-			// it will not remark it again.
+			// in case of that the pods have been already marked by this podmarker,
+			// we will not remark it again.
 			if usedMarkers.Has(marker.Name) && containsEveryMarks(pod, &marker.Spec.MarkItems) {
 				marker.Status.Succeeded++
 				continue
@@ -363,8 +353,8 @@ func distinguishPods(matchedPods, unmatchedPods []*corev1.Pod, marker *appsv1alp
 			podsNeedToMark = append(podsNeedToMark, pod)
 		} else if usedMarkers.Has(marker.Name) && containsAnyMarks(pod, &marker.Spec.MarkItems) {
 			// ignore the pod that needn't to be updated.
-			// in cases of that the marks were modified by others,
-			// podmarker will NOT clean these modified marks.
+			// in cases of that the marks have been modified by others,
+			// we WILL NOT clean these modified marks.
 			podsNeedToClean = append(podsNeedToClean, pod)
 		}
 	}

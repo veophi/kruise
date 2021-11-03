@@ -59,8 +59,8 @@ func TestPodEventHandler(t *testing.T) {
 	makeEnv(marker1, marker2)
 	testEnqueueRequestForPodCreate(oldPod, 1, t)
 
-	oldPod.Annotations = map[string]string{PodMarkedByPodMarkers: "marker-1"}
-	newPod.Annotations = map[string]string{PodMarkedByPodMarkers: "marker-2"}
+	oldPod.Labels = map[string]string{PodMarkedByPodMarkers: "marker-1"}
+	newPod.Labels = map[string]string{PodMarkedByPodMarkers: "marker-2"}
 	makeEnv(marker1, marker2)
 	testEnqueueRequestForPodUpdate(oldPod, newPod, 2, t)
 

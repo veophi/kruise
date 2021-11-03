@@ -1,7 +1,6 @@
 package podmarker
 
 import (
-	"fmt"
 	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
 	"github.com/openkruise/kruise/pkg/util"
 	corev1 "k8s.io/api/core/v1"
@@ -13,9 +12,13 @@ import (
 
 // object must be not nil
 func objectMatchesLabelSelector(object metav1.Object, labelSelector *metav1.LabelSelector) (bool, error) {
+	if labelSelector == nil {
+		return true, nil
+	}
 	if object.GetLabels() == nil {
 		return false, nil
 	}
+
 	selector, err := util.GetFastLabelSelector(labelSelector)
 	if err != nil {
 		return false, err
@@ -61,7 +64,7 @@ func containsEveryMarks(pod *corev1.Pod, marks *appsv1alpha1.PodMarkerMarkItems)
 	return true
 }
 
-func hasConflict(pod *corev1.Pod, markItems *appsv1alpha1.PodMarkerMarkItems, policy appsv1alpha1.PodMarkerConflictPolicyType) bool {
+func isConflicting(pod *corev1.Pod, markItems *appsv1alpha1.PodMarkerMarkItems, policy appsv1alpha1.PodMarkerConflictPolicyType) bool {
 	if policy == appsv1alpha1.PodMarkerConflictOverwrite {
 		return false
 	}
@@ -82,6 +85,65 @@ func hasConflict(pod *corev1.Pod, markItems *appsv1alpha1.PodMarkerMarkItems, po
 	return false
 }
 
+func addMarks(pod *corev1.Pod, marker *appsv1alpha1.PodMarker) *corev1.Pod {
+	pod = pod.DeepCopy()
+	markItems := marker.Spec.MarkItems
+	if len(markItems.Annotations) != 0 && pod.Annotations == nil {
+		pod.Annotations = map[string]string{}
+	}
+	if len(markItems.Labels) != 0 && pod.Labels == nil {
+		pod.Labels = map[string]string{}
+	}
+	for k, v := range markItems.Annotations {
+		pod.Annotations[k] = v
+	}
+	for k, v := range markItems.Labels {
+		pod.Labels[k] = v
+	}
+
+	labelOwnedPodMarkerLabel(pod, marker)
+	return pod
+}
+
+func removeMarks(pod *corev1.Pod, marker *appsv1alpha1.PodMarker) *corev1.Pod {
+	pod = pod.DeepCopy()
+	markItems := marker.Spec.MarkItems
+	if pod.Annotations != nil {
+		for k, v1 := range markItems.Annotations {
+			if v2, ok := pod.Annotations[k]; ok && v1 == v2 {
+				delete(pod.Annotations, k)
+			}
+		}
+	}
+	if pod.Labels != nil {
+		for k, v1 := range markItems.Labels {
+			if v2, ok := pod.Labels[k]; ok && v1 == v2 {
+				delete(pod.Labels, k)
+			}
+		}
+	}
+
+	cleanOwnedPodMarkerLabel(pod, marker)
+	return pod
+}
+
+func labelOwnedPodMarkerLabel(pod *corev1.Pod, marker *appsv1alpha1.PodMarker) {
+	markers := getMarkersWhoMarkedPod(pod)
+	markers.Insert(marker.Name).Delete("")
+	pod.Labels[PodMarkedByPodMarkers] = strings.Join(markers.List(), ",")
+}
+
+func cleanOwnedPodMarkerLabel(pod *corev1.Pod, marker *appsv1alpha1.PodMarker) {
+	markers := getMarkersWhoMarkedPod(pod)
+	markers.Delete(marker.Name, "")
+	if markers.Len() == 0 {
+		delete(pod.Labels, PodMarkedByPodMarkers)
+	} else {
+		pod.Labels[PodMarkedByPodMarkers] = strings.Join(markers.List(), ",")
+	}
+}
+
+/*
 func getMarkPatch(pod *corev1.Pod, marker *appsv1alpha1.PodMarker) []byte {
 	var ls, as []string
 	for k, v := range marker.Spec.MarkItems.Labels {
@@ -130,6 +192,7 @@ func getCleanPatch(pod *corev1.Pod, marker *appsv1alpha1.PodMarker) []byte {
 	return []byte(fmt.Sprintf(`{"metadata":{"labels":{%s},"annotations":{%s}}}`,
 		strings.Join(ls, ","), strings.Join(as, ",")))
 }
+*/
 
 func calculatePodMarkerStatus(marker *appsv1alpha1.PodMarker) {
 	marker.Status.ObservedGeneration = marker.Generation
@@ -143,11 +206,11 @@ func isEmptySelector(selector *metav1.LabelSelector) bool {
 	return len(selector.MatchLabels)+len(selector.MatchExpressions) == 0
 }
 
-func getPodAnnotationMarkers(pod *corev1.Pod) sets.String {
-	if pod.Annotations == nil || len(pod.Annotations[PodMarkedByPodMarkers]) == 0 {
+func getMarkersWhoMarkedPod(pod *corev1.Pod) sets.String {
+	if pod.Labels == nil || len(pod.Labels[PodMarkedByPodMarkers]) == 0 {
 		return sets.NewString()
 	}
-	return sets.NewString(strings.Split(pod.Annotations[PodMarkedByPodMarkers], ",")...)
+	return sets.NewString(strings.Split(pod.Labels[PodMarkedByPodMarkers], ",")...)
 }
 
 func listPodName(pods []*corev1.Pod) (names []string) {

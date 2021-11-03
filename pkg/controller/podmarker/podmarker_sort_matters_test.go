@@ -88,10 +88,11 @@ func defaultEnv() (pods []*v1.Pod, nodes []*v1.Node, podToNode map[string]*v1.No
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{ // matched
-				Name:        "pod-3",
-				Namespace:   "ns-1",
-				Labels:      map[string]string{"app": "nginx", "pod.state": "waiting_online", "upgradeStrategy": "inPlace"},
-				Annotations: map[string]string{PodMarkedByPodMarkers: "marker", "markUpgradeStrategyByPodMarker": "marker"},
+				Name:      "pod-3",
+				Namespace: "ns-1",
+				Labels: map[string]string{"app": "nginx", "pod.state": "waiting_online",
+					"upgradeStrategy": "inPlace", PodMarkedByPodMarkers: "marker"},
+				Annotations: map[string]string{"markUpgradeStrategyByPodMarker": "marker"},
 			},
 			Spec: v1.PodSpec{
 				NodeName: "node-1",
@@ -103,10 +104,9 @@ func defaultEnv() (pods []*v1.Pod, nodes []*v1.Node, podToNode map[string]*v1.No
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{ // matched
-				Name:        "pod-4",
-				Namespace:   "ns-1",
-				Labels:      map[string]string{"app": "nginx"},
-				Annotations: map[string]string{PodMarkedByPodMarkers: "others"},
+				Name:      "pod-4",
+				Namespace: "ns-1",
+				Labels:    map[string]string{"app": "nginx", PodMarkedByPodMarkers: "others"},
 			},
 			Spec: v1.PodSpec{
 				NodeName: "node-1",
@@ -118,10 +118,9 @@ func defaultEnv() (pods []*v1.Pod, nodes []*v1.Node, podToNode map[string]*v1.No
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{ //unmatched
-				Name:        "pod-5",
-				Namespace:   "ns-1",
-				Labels:      map[string]string{"app": "nginx", "upgradeStrategy": "inPlace"},
-				Annotations: map[string]string{PodMarkedByPodMarkers: "marker"},
+				Name:      "pod-5",
+				Namespace: "ns-1",
+				Labels:    map[string]string{"app": "nginx", "upgradeStrategy": "inPlace", PodMarkedByPodMarkers: "marker"},
 			},
 			Spec: v1.PodSpec{
 				NodeName: "node-2",
@@ -133,10 +132,9 @@ func defaultEnv() (pods []*v1.Pod, nodes []*v1.Node, podToNode map[string]*v1.No
 		},
 		{
 			ObjectMeta: metav1.ObjectMeta{ //unmatched
-				Name:        "pod-6",
-				Namespace:   "ns-1",
-				Labels:      map[string]string{"app": "nginx"},
-				Annotations: map[string]string{PodMarkedByPodMarkers: "marker"},
+				Name:      "pod-6",
+				Namespace: "ns-1",
+				Labels:    map[string]string{"app": "nginx", PodMarkedByPodMarkers: "marker"},
 			},
 			Spec: v1.PodSpec{
 				NodeName: "node-2",

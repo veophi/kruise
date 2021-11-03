@@ -29,14 +29,13 @@ import (
 )
 
 func sortMatchedPods(pods []*v1.Pod, podToNode map[string]*v1.Node, preferences []appsv1alpha1.PodMarkerPreference) error {
-	// podPriority[pods[i]] > podPriority[pods[j]] iff pods[i] has higher priority than pods[j]
+	// podPriority[i] > podPriority[j] iff i has higher priority than j
 	podPriority := make(map[string]int64, len(pods))
 	for i := range preferences {
 		for _, pod := range pods {
 			if ok, err := isPreferredPod(pod, podToNode[pod.Name], &preferences[i]); err != nil {
 				return err
 			} else if ok {
-				// higher the bit is, higher the priority is
 				podPriority[pod.Name] |= int64(1) << (markerutil.LimitedPreferencesNumber - i - 1)
 			}
 		}

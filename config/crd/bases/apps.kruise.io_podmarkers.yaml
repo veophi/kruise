@@ -24,7 +24,7 @@ spec:
       name: Desired
       type: integer
     - description: The number of pods that have been marked successful.
-      jsonPath: .status.active
+      jsonPath: .status.succeeded
       name: Succeeded
       type: integer
     - description: The number of failures when marking.
