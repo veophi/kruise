@@ -41,6 +41,8 @@ type Interface interface {
 	NodeImages() NodeImageInformer
 	// ResourceDistributions returns a ResourceDistributionInformer.
 	ResourceDistributions() ResourceDistributionInformer
+	// Rollouts returns a RolloutInformer.
+	Rollouts() RolloutInformer
 	// SidecarSets returns a SidecarSetInformer.
 	SidecarSets() SidecarSetInformer
 	// StatefulSets returns a StatefulSetInformer.
@@ -105,6 +107,11 @@ func (v *version) NodeImages() NodeImageInformer {
 // ResourceDistributions returns a ResourceDistributionInformer.
 func (v *version) ResourceDistributions() ResourceDistributionInformer {
 	return &resourceDistributionInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
+}
+
+// Rollouts returns a RolloutInformer.
+func (v *version) Rollouts() RolloutInformer {
+	return &rolloutInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
 // SidecarSets returns a SidecarSetInformer.

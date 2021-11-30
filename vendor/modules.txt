@@ -234,6 +234,7 @@ github.com/golang/protobuf/ptypes/timestamp
 github.com/gomodule/redigo/internal
 github.com/gomodule/redigo/redis
 # github.com/google/go-cmp v0.5.5
+## explicit
 github.com/google/go-cmp/cmp
 github.com/google/go-cmp/cmp/internal/diff
 github.com/google/go-cmp/cmp/internal/flags
@@ -270,6 +271,9 @@ github.com/mailru/easyjson/jlexer
 github.com/mailru/easyjson/jwriter
 # github.com/matttproud/golang_protobuf_extensions v1.0.2-0.20181231171920-c182affec369
 github.com/matttproud/golang_protobuf_extensions/pbutil
+# github.com/mitchellh/hashstructure/v2 v2.0.1
+## explicit
+github.com/mitchellh/hashstructure/v2
 # github.com/mitchellh/mapstructure v1.1.2
 github.com/mitchellh/mapstructure
 # github.com/moby/locker v1.0.1

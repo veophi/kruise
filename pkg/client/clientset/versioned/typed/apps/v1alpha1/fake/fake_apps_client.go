@@ -63,6 +63,10 @@ func (c *FakeAppsV1alpha1) ResourceDistributions() v1alpha1.ResourceDistribution
 	return &FakeResourceDistributions{c}
 }
 
+func (c *FakeAppsV1alpha1) Rollouts(namespace string) v1alpha1.RolloutInterface {
+	return &FakeRollouts{c, namespace}
+}
+
 func (c *FakeAppsV1alpha1) SidecarSets() v1alpha1.SidecarSetInterface {
 	return &FakeSidecarSets{c}
 }

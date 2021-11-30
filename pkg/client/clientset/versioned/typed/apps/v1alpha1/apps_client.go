@@ -34,6 +34,7 @@ type AppsV1alpha1Interface interface {
 	ImagePullJobsGetter
 	NodeImagesGetter
 	ResourceDistributionsGetter
+	RolloutsGetter
 	SidecarSetsGetter
 	StatefulSetsGetter
 	UnitedDeploymentsGetter
@@ -79,6 +80,10 @@ func (c *AppsV1alpha1Client) NodeImages() NodeImageInterface {
 
 func (c *AppsV1alpha1Client) ResourceDistributions() ResourceDistributionInterface {
 	return newResourceDistributions(c)
+}
+
+func (c *AppsV1alpha1Client) Rollouts(namespace string) RolloutInterface {
+	return newRollouts(c, namespace)
 }
 
 func (c *AppsV1alpha1Client) SidecarSets() SidecarSetInterface {

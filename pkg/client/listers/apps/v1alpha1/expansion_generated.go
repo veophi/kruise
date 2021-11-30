@@ -81,6 +81,14 @@ type NodeImageListerExpansion interface{}
 // ResourceDistributionLister.
 type ResourceDistributionListerExpansion interface{}
 
+// RolloutListerExpansion allows custom methods to be added to
+// RolloutLister.
+type RolloutListerExpansion interface{}
+
+// RolloutNamespaceListerExpansion allows custom methods to be added to
+// RolloutNamespaceLister.
+type RolloutNamespaceListerExpansion interface{}
+
 // SidecarSetListerExpansion allows custom methods to be added to
 // SidecarSetLister.
 type SidecarSetListerExpansion interface{}

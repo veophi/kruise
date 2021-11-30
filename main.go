@@ -18,6 +18,7 @@ package main
 
 import (
 	"flag"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"math/rand"
 	"net/http"
 	_ "net/http/pprof"
@@ -66,6 +67,7 @@ func init() {
 	_ = appsv1beta1.AddToScheme(scheme)
 	_ = policyv1alpha1.AddToScheme(scheme)
 	scheme.AddUnversionedTypes(metav1.SchemeGroupVersion, &metav1.UpdateOptions{}, &metav1.DeleteOptions{}, &metav1.CreateOptions{})
+	utilruntime.Must(appsv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
