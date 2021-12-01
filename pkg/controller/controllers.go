@@ -29,6 +29,7 @@ import (
 	"github.com/openkruise/kruise/pkg/controller/podreadiness"
 	"github.com/openkruise/kruise/pkg/controller/podunavailablebudget"
 	"github.com/openkruise/kruise/pkg/controller/resourcedistribution"
+	"github.com/openkruise/kruise/pkg/controller/rollout"
 	"github.com/openkruise/kruise/pkg/controller/sidecarset"
 	"github.com/openkruise/kruise/pkg/controller/statefulset"
 	"github.com/openkruise/kruise/pkg/controller/uniteddeployment"
@@ -57,6 +58,7 @@ func init() {
 	controllerAddFuncs = append(controllerAddFuncs, resourcedistribution.Add)
 	controllerAddFuncs = append(controllerAddFuncs, ephemeraljob.Add)
 	controllerAddFuncs = append(controllerAddFuncs, containerlauchpriority.Add)
+	controllerAddFuncs = append(controllerAddFuncs, rollout.Add)
 }
 
 func SetupWithManager(m manager.Manager) error {

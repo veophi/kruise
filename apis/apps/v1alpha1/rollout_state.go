@@ -216,6 +216,7 @@ func (r *RolloutStatus) ResetStatus() {
 	r.CurrentBatch = 0
 	r.UpgradedReplicas = 0
 	r.UpgradedReadyReplicas = 0
+	r.LastBatchFinalizedTime = metav1.NewTime(time.Now())
 }
 
 // SetRolloutCondition sets the supplied condition, replacing any existing condition

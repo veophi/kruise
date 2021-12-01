@@ -68,24 +68,34 @@ func NewRolloutPlanController(client client.Client, recorder record.EventRecorde
 
 // Reconcile reconciles a rollout plan
 func (r *Controller) Reconcile(ctx context.Context) (res reconcile.Result, status *v1alpha1.RolloutStatus) {
-	klog.InfoS("Reconcile the rollout plan", "rollout status", r.rolloutStatus,
-		"target workload", klog.KObj(r.targetWorkload))
+	klog.V(3).InfoS("Reconcile the rollout plan", "rollout status", r.rolloutStatus,
+		"target workload", r.targetWorkload.Name)
 
-	klog.InfoS("rollout status", "rollout state", r.rolloutStatus.RollingState, "batch rolling state",
+	klog.V(3).InfoS("rollout status", "rollout state", r.rolloutStatus.RollingState, "batch rolling state",
 		r.rolloutStatus.BatchRollingState, "current batch", r.rolloutStatus.CurrentBatch, "upgraded Replicas",
 		r.rolloutStatus.UpgradedReplicas, "ready Replicas", r.rolloutStatus.UpgradedReadyReplicas)
 
 	defer func() {
-		klog.InfoS("Finished one round of reconciling rollout plan", "rollout state", status.RollingState,
+		klog.V(3).InfoS("Finished one round of reconciling rollout plan", "rollout state", status.RollingState,
 			"batch rolling state", status.BatchRollingState, "current batch", status.CurrentBatch,
 			"upgraded Replicas", status.UpgradedReplicas, "ready Replicas", status.UpgradedReadyReplicas,
 			"reconcile result ", res)
 	}()
 	status = r.rolloutStatus
 
+	if status.CurrentBatch >= 1 {
+		lastBatch := r.rolloutSpec.RolloutBatches[status.CurrentBatch-1]
+		waitDuration := time.Duration(lastBatch.PauseSeconds) * time.Second
+		if status.LastBatchFinalizedTime.Time.Add(waitDuration).After(time.Now()) {
+			restDuration := status.LastBatchFinalizedTime.Time.Add(waitDuration).Sub(time.Now())
+			klog.V(3).Infof("Rollout paused and will reconcile after %v", restDuration)
+			return reconcile.Result{RequeueAfter: restDuration}, nil
+		}
+	}
+
 	defer func() {
-		if status.RollingState == v1alpha1.RolloutFailedState ||
-			status.RollingState == v1alpha1.RolloutSucceedState {
+		//if status.RollingState == v1alpha1.RolloutFailedState ||
+		if status.RollingState == v1alpha1.RolloutSucceedState {
 			// no need to requeue if we reach the terminal states
 			res = reconcile.Result{}
 		} else {
@@ -104,6 +114,8 @@ func (r *Controller) Reconcile(ctx context.Context) (res reconcile.Result, statu
 
 	switch r.rolloutStatus.RollingState {
 	case v1alpha1.VerifyingSpecState:
+		klog.V(3).Infof("RolloutPlan State Machine: Deployment into %s state", v1alpha1.VerifyingSpecState)
+
 		verified, err := workloadController.VerifySpec(ctx)
 		if err != nil {
 			// we can fail it right away, everything after initialized need to be finalized
@@ -113,6 +125,8 @@ func (r *Controller) Reconcile(ctx context.Context) (res reconcile.Result, statu
 		}
 
 	case v1alpha1.InitializingState:
+		klog.V(3).Infof("RolloutPlan State Machine: Deployment into %s state", v1alpha1.InitializingState)
+
 		initialized, err := workloadController.Initialize(ctx)
 		if err != nil {
 			r.rolloutStatus.RolloutFailing(err.Error())
@@ -121,25 +135,38 @@ func (r *Controller) Reconcile(ctx context.Context) (res reconcile.Result, statu
 		}
 
 	case v1alpha1.RollingInBatchesState:
+		klog.V(3).Infof("RolloutPlan State Machine: Deployment into %s state", v1alpha1.RollingInBatchesState)
+
 		r.reconcileBatchInRolling(ctx, workloadController)
 
 	case v1alpha1.RolloutFailingState, v1alpha1.RolloutAbandoningState, v1alpha1.RolloutDeletingState:
+		klog.V(3).Infof("RolloutPlan State Machine: Deployment into %s state", fmt.Sprintf("%s/%s/%s",
+			v1alpha1.RolloutFailingState, v1alpha1.RolloutAbandoningState, v1alpha1.RolloutDeletingState))
+
 		if succeed := workloadController.Finalize(ctx, false); succeed {
 			r.finalizeRollout(ctx)
 		}
 
 	case v1alpha1.FinalisingState:
+		klog.V(3).Infof("RolloutPlan State Machine: Deployment into %s state", v1alpha1.FinalisingState)
+
 		if succeed := workloadController.Finalize(ctx, true); succeed {
 			r.finalizeRollout(ctx)
 		}
 
 	case v1alpha1.RolloutSucceedState:
+		klog.V(3).Infof("RolloutPlan State Machine: Deployment into %s state", v1alpha1.RolloutSucceedState)
+
 		// Nothing to do
 
 	case v1alpha1.RolloutFailedState:
+		klog.V(3).Infof("RolloutPlan State Machine: Deployment into %s state", v1alpha1.RolloutFailedState)
+
 		// Nothing to do
 
 	default:
+		klog.V(3).Infof("RolloutPlan State Machine: Deployment into %s state", "Unknown")
+
 		panic(fmt.Sprintf("illegal rollout status %+v", r.rolloutStatus))
 	}
 
@@ -156,9 +183,13 @@ func (r *Controller) reconcileBatchInRolling(ctx context.Context, workloadContro
 
 	switch r.rolloutStatus.BatchRollingState {
 	case v1alpha1.BatchInitializingState:
+		klog.V(3).Infof("RolloutBatch State Machine: Deployment into %s state", v1alpha1.BatchInitializingState)
+
 		r.initializeOneBatch(ctx)
 
 	case v1alpha1.BatchInRollingState:
+		klog.V(3).Infof("RolloutBatch State Machine: Deployment into %s state", v1alpha1.BatchInRollingState)
+
 		//  still rolling the batch, the batch rolling is not completed yet
 		upgradeDone, err := workloadController.RolloutOneBatchPods(ctx)
 		if err != nil {
@@ -168,6 +199,8 @@ func (r *Controller) reconcileBatchInRolling(ctx context.Context, workloadContro
 		}
 
 	case v1alpha1.BatchVerifyingState:
+		klog.V(3).Infof("RolloutBatch State Machine: Deployment into %s state", v1alpha1.BatchVerifyingState)
+
 		// verifying if the application is ready to roll
 		// need to check if they meet the availability requirements in the rollout spec.
 		// TODO: evaluate any metrics/analysis
@@ -180,6 +213,8 @@ func (r *Controller) reconcileBatchInRolling(ctx context.Context, workloadContro
 		}
 
 	case v1alpha1.BatchFinalizingState:
+		klog.V(3).Infof("RolloutBatch State Machine: Deployment into %s state", v1alpha1.BatchFinalizingState)
+
 		// finalize one batch
 		finalized, err := workloadController.FinalizeOneBatch(ctx)
 		if err != nil {
@@ -189,11 +224,14 @@ func (r *Controller) reconcileBatchInRolling(ctx context.Context, workloadContro
 		}
 
 	case v1alpha1.BatchReadyState:
+		klog.V(3).Infof("RolloutBatch State Machine: Deployment into %s state", v1alpha1.BatchReadyState)
+
 		// all the pods in the are upgraded and their state are ready
 		// wait to move to the next batch if there are any
 		r.tryMovingToNextBatch()
 
 	default:
+		klog.V(3).Infof("RolloutBatch State Machine: Deployment into %s state", "Unknown")
 		panic(fmt.Sprintf("illegal status %+v", r.rolloutStatus))
 	}
 }
@@ -222,7 +260,7 @@ func (r *Controller) gatherAllWebhooks() []v1alpha1.RolloutWebhook {
 // check if we can move to the next batch
 func (r *Controller) tryMovingToNextBatch() {
 	if r.rolloutSpec.BatchPartition == nil || *r.rolloutSpec.BatchPartition > r.rolloutStatus.CurrentBatch {
-		klog.InfoS("ready to rollout the next batch", "current batch", r.rolloutStatus.CurrentBatch)
+		klog.V(3).InfoS("ready to rollout the next batch", "current batch", r.rolloutStatus.CurrentBatch)
 		r.rolloutStatus.StateTransition(v1alpha1.BatchRolloutApprovedEvent)
 	} else {
 		klog.V(3).InfoS("the current batch is waiting to move on", "current batch",
@@ -240,12 +278,13 @@ func (r *Controller) finalizeOneBatch(ctx context.Context) {
 		//	fmt.Sprintf("upgrade pod = %d, total ready pod = %d", r.rolloutStatus.UpgradedReplicas,
 		//		r.rolloutStatus.UpgradedReadyReplicas)))
 	} else {
-		klog.InfoS("finished one batch rollout", "current batch", r.rolloutStatus.CurrentBatch)
+		klog.V(3).InfoS("finished one batch rollout", "current batch", r.rolloutStatus.CurrentBatch)
 		// th
 		//r.recorder.Event(r.parentController, event.Normal("Batch Finalized",
 		//fmt.Sprintf("Batch %d is finalized and ready to go", r.rolloutStatus.CurrentBatch)))
 		r.rolloutStatus.StateTransition(v1alpha1.FinishedOneBatchEvent)
 	}
+	r.rolloutStatus.LastBatchFinalizedTime.Time = time.Now()
 }
 
 // all the common finalize work after we rollout

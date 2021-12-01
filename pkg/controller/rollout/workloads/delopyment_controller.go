@@ -74,11 +74,13 @@ func (c *deploymentController) claimDeployment(ctx context.Context, deploy *apps
 	deploy.Spec.Strategy.RollingUpdate = nil
 
 	// patch the Deployment
-	if err := c.client.Patch(ctx, deploy, deployPatch, client.FieldOwner(c.parentController.GetUID())); err != nil {
+	if err := c.client.Patch(context.TODO(), deploy, deployPatch, client.FieldOwner(c.parentController.GetUID())); err != nil {
 		c.recorder.Eventf(deploy, v1.EventTypeWarning, "DeploymentUpdateError", err.Error())
 		c.rolloutStatus.RolloutRetry(err.Error())
 		return false, err
 	}
+
+	klog.V(3).Info("Claim Deployment Successfully")
 	return false, nil
 }
 
@@ -88,7 +90,7 @@ func (c *deploymentController) scaleDeployment(ctx context.Context, deploy *apps
 	deploy.Spec.Replicas = pointer.Int32Ptr(size)
 
 	// patch the Deployment
-	if err := c.client.Patch(ctx, deploy, deployPatch, client.FieldOwner(c.parentController.GetUID())); err != nil {
+	if err := c.client.Patch(context.TODO(), deploy, deployPatch, client.FieldOwner(c.parentController.GetUID())); err != nil {
 		c.recorder.Eventf(deploy, v1.EventTypeWarning, "DeploymentScale", "Failed to update the deployment %s to the correct target %d, error: %v", deploy.GetName(), size, err)
 		c.rolloutStatus.RolloutRetry(err.Error())
 		return err
@@ -116,7 +118,7 @@ func (c *deploymentController) scaleReplicaSet(ctx context.Context, rs *apps.Rep
 		rsCopy := rs.DeepCopy()
 		*(rsCopy.Spec.Replicas) = newScale
 		deploymentutil.SetReplicasAnnotations(rsCopy, *(deployment.Spec.Replicas), *(deployment.Spec.Replicas)+deploymentutil.MaxSurge(*deployment))
-		err = c.client.Update(ctx, rsCopy, client.FieldOwner(deployment.GetUID()))
+		err = c.client.Update(context.TODO(), rsCopy, client.FieldOwner(deployment.GetUID()))
 		if err == nil && sizeNeedsUpdate {
 			c.recorder.Eventf(deployment, v1.EventTypeNormal, "ScalingReplicaSet", "Scaled %s replica set %s to %d", scalingOperation, rs.Name, newScale)
 		}
@@ -139,7 +141,7 @@ func (c *deploymentController) releaseDeployment(ctx context.Context, deploy *ap
 		newOwnerList = append(newOwnerList, owner)
 	}
 	if !found {
-		klog.InfoS("the deployment is already released", "deploy", deploy.Name)
+		klog.V(3).InfoS("the deployment is already released", "deploy", deploy.Name)
 		return true, nil
 	}
 	deploy.SetOwnerReferences(newOwnerList)
@@ -174,10 +176,11 @@ func (c *deploymentController) releaseDeployment(ctx context.Context, deploy *ap
 	deploy.Spec.Paused = true
 
 	// patch the Deployment
-	if err := c.client.Patch(ctx, deploy, deployPatch, client.FieldOwner(c.parentController.GetUID())); err != nil {
+	if err := c.client.Patch(context.TODO(), deploy, deployPatch, client.FieldOwner(c.parentController.GetUID())); err != nil {
 		c.recorder.Eventf(deploy, v1.EventTypeWarning, "ReleaseDeploymentFailed", err.Error())
 		c.rolloutStatus.RolloutRetry(err.Error())
 		return false, err
 	}
+
 	return false, nil
 }

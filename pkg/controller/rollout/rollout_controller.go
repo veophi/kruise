@@ -18,12 +18,13 @@ package rollout
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
+	"github.com/openkruise/kruise/pkg/controller/rollout/workloads"
 	"reflect"
 
 	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
 	"github.com/openkruise/kruise/pkg/util"
-	utildiscovery "github.com/openkruise/kruise/pkg/util/discovery"
 	"github.com/openkruise/kruise/pkg/util/ratelimiter"
 	apps "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -44,12 +45,12 @@ import (
 )
 
 func init() {
-	flag.IntVar(&concurrentReconciles, "Rollout-workers", concurrentReconciles, "Max concurrent workers for Rollout controller.")
+	flag.IntVar(&concurrentReconciles, "rollout-workers", concurrentReconciles, "Max concurrent workers for Rollout controller.")
 }
 
 var (
 	concurrentReconciles = 3
-	controllerKind       = appsv1alpha1.SchemeGroupVersion.WithKind("Rollout")
+	//controllerKind       = appsv1alpha1.SchemeGroupVersion.WithKind("Rollout")
 )
 
 /**
@@ -60,16 +61,16 @@ var (
 // Add creates a new Rollout Controller and adds it to the Manager with default RBAC. The Manager will set fields on the Controller
 // and Start it when the Manager is Started.
 func Add(mgr manager.Manager) error {
-	if !utildiscovery.DiscoverGVK(controllerKind) {
-		return nil
-	}
+	//if !utildiscovery.DiscoverGVK(controllerKind) {
+	//	return nil
+	//}
 	return add(mgr, newReconciler(mgr))
 }
 
 // newReconciler returns a new reconcile.Reconciler
 func newReconciler(mgr manager.Manager) reconcile.Reconciler {
-	recorder := mgr.GetEventRecorderFor("Rollout-controller")
-	cli := util.NewClientFromManager(mgr, "Rollout-controller")
+	recorder := mgr.GetEventRecorderFor("rollout-controller")
+	cli := util.NewClientFromManager(mgr, "rollout-controller")
 	return &ReconcileRollout{
 		Client:   cli,
 		scheme:   mgr.GetScheme(),
@@ -80,7 +81,7 @@ func newReconciler(mgr manager.Manager) reconcile.Reconciler {
 // add adds a new Controller to mgr with r as the reconcile.Reconciler
 func add(mgr manager.Manager, r reconcile.Reconciler) error {
 	// Create a new controller
-	c, err := controller.New("Rollout-controller", mgr, controller.Options{
+	c, err := controller.New("rollout-controller", mgr, controller.Options{
 		Reconciler: r, MaxConcurrentReconciles: concurrentReconciles,
 		RateLimiter: ratelimiter.DefaultControllerRateLimiter()})
 	if err != nil {
@@ -131,8 +132,12 @@ type ReconcileRollout struct {
 	recorder record.EventRecorder
 }
 
-// +kubebuilder:rbac:groups=apps.kruise.io,resources=Rollouts,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=apps.kruise.io,resources=Rollouts/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=apps.kruise.io,resources=rollouts,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps.kruise.io,resources=rollouts/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=apps,resources=replicasets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=replicasets/status,verbs=get;update;patch
 
 // Reconcile reads that state of the cluster for a Rollout object and makes changes based on the state read
 // and what is in the Rollout.Spec
@@ -142,10 +147,22 @@ func (r *ReconcileRollout) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	klog.InfoS("start rollout reconcile", "rollout",
+	klog.V(3).InfoS("start rollout reconcile", "rollout",
 		klog.KRef(rollout.Namespace, rollout.Name), "rolling state", rollout.Status.RollingState)
 
 	if len(rollout.Status.RollingState) == 0 {
+		rollout.Status.ResetStatus()
+	}
+
+	deploymentController := workloads.NewDeploymentRolloutController(
+		r.Client, r.recorder, rollout, rollout.Spec.RolloutPlan.DeepCopy(), rollout.Status.RolloutStatus.DeepCopy(), types.NamespacedName{
+			Namespace: rollout.Namespace, Name: rollout.Spec.TargetRef.Name,
+		})
+	if err := deploymentController.FetchDeploymentAndItsReplicaSets(context.Background()); err != nil {
+		klog.Errorf("Get deployment and its replicaset Failed, error: %v", err)
+		return reconcile.Result{}, err
+	}
+	if deploymentController.GetUpdateRevision() != rollout.Status.UpdateRevision {
 		rollout.Status.ResetStatus()
 	}
 
@@ -158,28 +175,34 @@ func (r *ReconcileRollout) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			return ctrl.Result{}, err
 		}
 		if workload == nil {
-			klog.InfoS(" the target workload is gone, no need do anything", "rollout",
+			klog.V(3).InfoS(" the target workload is gone, no need do anything", "rollout",
 				klog.KRef(rollout.Namespace, rollout.Name), "rolling state", rollout.Status.RollingState)
 			rollout.Status.StateTransition(appsv1alpha1.RollingFinalizedEvent)
 			// update the appRollout status
-			return ctrl.Result{}, r.updateStatus(ctx, rollout)
 		}
 	case appsv1alpha1.LocatingTargetAppState:
-		workload, err = r.getTargetRef(rollout)
-		if err != nil || workload == nil {
-			return reconcile.Result{}, err
-		}
 		rollout.Status.StateTransition(appsv1alpha1.AppLocatedEvent)
-		klog.InfoS("finished  rollout apply targetWorkload, passed LocatingTargetApp phase", "rollout",
-			klog.KRef(rollout.Namespace, rollout.Name), "rolling state", rollout.Status.RollingState)
-		return ctrl.Result{}, r.updateStatus(ctx, rollout)
 	default:
 		// we should do nothing
 	}
 
-	rolloutPlanController := NewRolloutPlanController(r.Client, r.recorder, rollout, &rollout.Spec.RolloutPlan, &rollout.Status.RolloutStatus, workload)
+	workload, err = r.getTargetRef(rollout)
+	if err != nil {
+		klog.Errorf("Get Target Workload Failed, error %v", err)
+		return reconcile.Result{}, err
+	} else if workload == nil {
+		klog.V(3).InfoS(" the target workload is gone, no need do anything", "rollout",
+			klog.KRef(rollout.Namespace, rollout.Name), "rolling state", rollout.Status.RollingState)
+		rollout.Status.StateTransition(appsv1alpha1.RollingFinalizedEvent)
+		return reconcile.Result{}, nil
+	}
 
-	result, rolloutStatus := rolloutPlanController.Reconcile(ctx)
+	rolloutPlanController := NewRolloutPlanController(r.Client, r.recorder, rollout, &rollout.Spec.RolloutPlan, &rollout.Status.RolloutStatus, workload)
+	result, rolloutStatus := rolloutPlanController.Reconcile(context.Background())
+
+	by, _ := json.Marshal(rolloutStatus)
+	klog.V(3).Infof("Rollout Status %v", string(by))
+
 	rollout.Status.RolloutStatus = *rolloutStatus
 	return result, r.updateStatus(ctx, rollout)
 }

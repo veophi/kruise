@@ -109,8 +109,12 @@ rules:
   resources:
   - replicasets
   verbs:
+  - create
+  - delete
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - apps
@@ -118,6 +122,8 @@ rules:
   - replicasets/status
   verbs:
   - get
+  - patch
+  - update
 - apiGroups:
   - apps
   resources:
@@ -134,26 +140,6 @@ rules:
   - apps
   resources:
   - statefulsets/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - apps.kruise.io
-  resources:
-  - Rollouts
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - apps.kruise.io
-  resources:
-  - Rollouts/status
   verbs:
   - get
   - patch
@@ -329,6 +315,26 @@ rules:
   - apps.kruise.io
   resources:
   - resourcedistributions/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - apps.kruise.io
+  resources:
+  - rollouts
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps.kruise.io
+  resources:
+  - rollouts/status
   verbs:
   - get
   - patch

@@ -15,7 +15,7 @@ require (
 	github.com/go-openapi/spec v0.19.3
 	github.com/google/go-cmp v0.5.5
 	github.com/gorilla/mux v1.8.0
-	github.com/mitchellh/hashstructure/v2 v2.0.1
+	github.com/mitchellh/hashstructure/v2 v2.0.1 // indirect
 	github.com/onsi/ginkgo v1.14.1
 	github.com/onsi/gomega v1.10.3
 	github.com/opencontainers/go-digest v1.0.0

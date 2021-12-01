@@ -55,9 +55,6 @@ spec:
             description: RolloutSpec defines how to describe an update between different
               compRevision
             properties:
-              componentName:
-                description: ComponentName specify the component name
-                type: string
               rolloutPlan:
                 description: RolloutPlan is the details on how to rollout the resources
                 properties:
@@ -274,11 +271,6 @@ spec:
                             - name
                             type: object
                           type: array
-                        instanceInterval:
-                          description: The wait time, in seconds, between instances
-                            upgrades, default = 0
-                          format: int32
-                          type: integer
                         maxUnavailable:
                           anyOf:
                           - type: integer
@@ -289,6 +281,11 @@ spec:
                             number of pods unavailable than this number. default =
                             0
                           x-kubernetes-int-or-string: true
+                        pauseSeconds:
+                          description: The wait time, in seconds, between instances
+                            upgrades, default = 0
+                          format: int64
+                          type: integer
                         podList:
                           description: The list of Pods to get upgraded it is mutually
                             exclusive with the Replicas field
@@ -353,11 +350,6 @@ spec:
                     format: int32
                     type: integer
                 type: object
-              sourceRevisionName:
-                description: SourceRevisionName contains the name of the componentRevisionName  that
-                  we need to upgrade from. it can be empty only when it's the first
-                  time to deploy the application
-                type: string
               targetReference:
                 description: TargetRevisionName contains the name of the componentRevisionName
                   that we need to upgrade to.
@@ -377,7 +369,6 @@ spec:
                 - name
                 type: object
             required:
-            - componentName
             - rolloutPlan
             - targetReference
             type: object
@@ -440,6 +431,9 @@ spec:
                   ways to identify that so we cannot compare between resources We
                   update this field only after a successful rollout
                 type: string
+              lastBatchFinalizedTime:
+                format: date-time
+                type: string
               lastTargetRevision:
                 description: LastUpgradedTargetRevision contains the name of the componentRevisionName
                   that we upgraded to We will restart the rollout if this is not the
@@ -480,6 +474,7 @@ spec:
                 type: integer
             required:
             - currentBatch
+            - lastBatchFinalizedTime
             - lastTargetRevision
             - rollingState
             - upgradedReadyReplicas

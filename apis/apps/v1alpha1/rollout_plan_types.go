@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"github.com/openkruise/kruise/apis/apps/v1alpha1/condition"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
@@ -166,7 +167,7 @@ type RolloutBatch struct {
 
 	// The wait time, in seconds, between instances upgrades, default = 0
 	// +optional
-	InstanceInterval *int32 `json:"instanceInterval,omitempty"`
+	PauseSeconds int64 `json:"pauseSeconds,omitempty"`
 
 	// RolloutWebhooks provides a way for the batch rollout to interact with an external process
 	// +optional
@@ -267,6 +268,8 @@ type RolloutStatus struct {
 
 	// RollingState is the Rollout State
 	RollingState RollingState `json:"rollingState"`
+
+	LastBatchFinalizedTime metav1.Time `json:"lastBatchFinalizedTime,rollingState"`
 
 	// StableRevision
 	StableRevision string `json:"StableRevision,omitempty"`

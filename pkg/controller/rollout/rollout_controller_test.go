@@ -47,15 +47,15 @@ var (
 				RolloutBatches: []appsv1alpha1.RolloutBatch{
 					{
 						Replicas:       intstr.FromString("10%"),
-						MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(0)},
+						MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(100)},
 					},
 					{
 						Replicas:       intstr.FromString("50%"),
-						MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(0)},
+						MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(100)},
 					},
 					{
 						Replicas:       intstr.FromString("80%"),
-						MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(0)},
+						MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(100)},
 					},
 				},
 			},
@@ -70,12 +70,26 @@ var (
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "deploy",
 			Namespace: "application",
+			UID:       types.UID("87076677"),
 			Labels: map[string]string{
+				"app":                                "busybox",
 				apps.DefaultDeploymentUniqueLabelKey: "update-pod-hash",
 			},
 		},
 		Spec: apps.DeploymentSpec{
 			Replicas: pointer.Int32Ptr(100),
+			Strategy: apps.DeploymentStrategy{
+				Type: apps.RollingUpdateDeploymentStrategyType,
+				RollingUpdate: &apps.RollingUpdateDeployment{
+					MaxSurge:       &intstr.IntOrString{Type: intstr.Int, IntVal: int32(1)},
+					MaxUnavailable: &intstr.IntOrString{Type: intstr.String, StrVal: "25%"},
+				},
+			},
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "busybox",
+				},
+			},
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					Containers: containers("latest"),
@@ -97,7 +111,17 @@ var (
 			Name:      "stable-replicaset",
 			Namespace: "application",
 			Labels: map[string]string{
+				"app":                                "busybox",
 				apps.DefaultDeploymentUniqueLabelKey: "stable-pod-hash",
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion: deployDemo.APIVersion,
+					Kind:       deployDemo.Kind,
+					Name:       deployDemo.Name,
+					UID:        deployDemo.UID,
+					Controller: pointer.BoolPtr(true),
+				},
 			},
 		},
 		Spec: apps.ReplicaSetSpec{
@@ -109,8 +133,8 @@ var (
 			},
 		},
 		Status: apps.ReplicaSetStatus{
-			Replicas:      100,
-			ReadyReplicas: 100,
+			Replicas:      0,
+			ReadyReplicas: 0,
 		},
 	}
 )
@@ -127,7 +151,6 @@ func containers(version string) []corev1.Container {
 func TestReconcileRollout_Reconcile(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = apps.AddToScheme(scheme)
-	_ = corev1.AddToScheme(scheme)
 	_ = appsv1alpha1.AddToScheme(scheme)
 
 	rollout := rolloutDemo.DeepCopy()
@@ -136,10 +159,6 @@ func TestReconcileRollout_Reconcile(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(rollout, deployment, replicaSet).Build()
 	fakeRecord := record.NewFakeRecorder(100)
-
-	if err := fakeClient.Create(context.TODO(), rollout); err != nil {
-		t.Fatalf("Failed to create Rollout, error %v", err)
-	}
 
 	reconciler := ReconcileRollout{
 		Client:   fakeClient,

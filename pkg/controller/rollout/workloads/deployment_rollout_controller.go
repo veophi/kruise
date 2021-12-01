@@ -19,14 +19,10 @@ package workloads
 import (
 	"context"
 	"fmt"
-	v1 "k8s.io/api/core/v1"
-	"sort"
-	"strconv"
-
-	"github.com/mitchellh/hashstructure/v2"
 	"github.com/openkruise/kruise/apis/apps/v1alpha1"
 	deploymentutil "github.com/openkruise/kruise/pkg/controller/rollout/workloads/copy_from_deployment/util"
 	apps "k8s.io/api/apps/v1"
+	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -36,6 +32,7 @@ import (
 	k8scontroller "k8s.io/kubernetes/pkg/controller"
 	"k8s.io/utils/integer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sort"
 )
 
 // DeploymentRolloutController is responsible for handling rollout deployment type of workloads
@@ -75,7 +72,7 @@ func (c *DeploymentRolloutController) VerifySpec(ctx context.Context) (bool, err
 		}
 	}()
 
-	if err := c.fetchDeploymentAndItsReplicaSets(ctx); err != nil {
+	if err := c.FetchDeploymentAndItsReplicaSets(ctx); err != nil {
 		c.rolloutStatus.RolloutRetry(err.Error())
 		// do not fail the rollout just because we can't get the resource
 		// nolint:nilerr
@@ -91,26 +88,29 @@ func (c *DeploymentRolloutController) VerifySpec(ctx context.Context) (bool, err
 	// we do not handle scale case in this controller
 	c.rolloutStatus.RolloutTargetSize = targetTotalReplicas
 
-	if achievedHealthy := c.checkAndRecordRevisions(); !achievedHealthy {
-		return false, fmt.Errorf("deployment has not achieve healthy state")
-	}
-
-	// make sure that the updateRevision is different from what we have already done
-	if (getReplicaSetsReplicas(c.sourceReplicaSets...) == 0 && c.targetReplicaSet.Spec.Replicas != nil &&
-		*c.targetReplicaSet.Spec.Replicas == targetTotalReplicas) || (c.rolloutStatus.StableRevision == c.rolloutStatus.UpdateRevision) {
-		return false, fmt.Errorf("there is no difference between the source and target")
-	}
-
 	if !c.deployment.Spec.Paused && getDeploymentReplicas(&c.deployment) != c.deployment.Status.Replicas {
 		return false, fmt.Errorf("the source deployment %s is still being reconciled, need to be paused or stable",
 			c.deployment.GetName())
 	}
 
-	// check if the targetDeploy has any controller
-	if controller := metav1.GetControllerOf(&c.deployment); controller != nil {
-		return false, fmt.Errorf("the target deployment %s has a controller owner %s",
-			c.deployment.GetName(), controller.String())
+	if achievedHealthy := c.checkHealthyAndRecordRevisions(); !achievedHealthy {
+		klog.V(3).Infof("deployment has not achieve healthy state")
+		return false, nil
 	}
+
+	// make sure that the updateRevision is different from what we have already done
+	if (getReplicaSetsReplicas(c.sourceReplicaSets...) == 0 && *c.targetReplicaSet.Spec.Replicas == targetTotalReplicas) ||
+		(c.rolloutStatus.StableRevision == c.rolloutStatus.UpdateRevision) {
+		return false, fmt.Errorf("there is no difference between the source and target")
+	}
+
+	/*
+		// check if the targetDeploy has any controller
+		if controller := metav1.GetControllerOf(&c.deployment); controller != nil {
+			return false, fmt.Errorf("the target deployment %s has a controller owner %s",
+				c.deployment.GetName(), controller.String())
+		}
+	*/
 
 	// mark the rollout verified
 	c.recorder.Event(c.parentController, v1.EventTypeNormal, "Rollout Verified", "Rollout spec and the Deployment resource are verified")
@@ -121,7 +121,7 @@ func (c *DeploymentRolloutController) VerifySpec(ctx context.Context) (bool, err
 
 // Initialize makes sure that the source and target deployment is under our control
 func (c *DeploymentRolloutController) Initialize(ctx context.Context) (bool, error) {
-	if err := c.fetchDeploymentAndItsReplicaSets(ctx); err != nil {
+	if err := c.FetchDeploymentAndItsReplicaSets(ctx); err != nil {
 		c.rolloutStatus.RolloutRetry(err.Error())
 		return false, nil
 	}
@@ -140,7 +140,7 @@ func (c *DeploymentRolloutController) Initialize(ctx context.Context) (bool, err
 // RolloutOneBatchPods calculates the number of pods we can upgrade once according to the rollout spec
 // and then set the partition accordingly
 func (c *DeploymentRolloutController) RolloutOneBatchPods(ctx context.Context) (bool, error) {
-	if err := c.fetchDeploymentAndItsReplicaSets(ctx); err != nil {
+	if err := c.FetchDeploymentAndItsReplicaSets(ctx); err != nil {
 		// don't fail the rollout just because of we can't get the resource
 		// nolint:nilerr
 		c.rolloutStatus.RolloutRetry(err.Error())
@@ -169,7 +169,7 @@ func (c *DeploymentRolloutController) RolloutOneBatchPods(ctx context.Context) (
 	}
 
 	// record the finished upgrade action
-	klog.InfoS("upgraded one batch", "current batch", c.rolloutStatus.CurrentBatch,
+	klog.V(3).InfoS("upgraded one batch", "current batch", c.rolloutStatus.CurrentBatch,
 		"target deployment size", targetSize)
 	c.recorder.Eventf(c.parentController, v1.EventTypeNormal, "Batch Rollout", "Finished submitting all upgrade quests for batch %d", c.rolloutStatus.CurrentBatch)
 	c.rolloutStatus.UpgradedReplicas = targetSize
@@ -178,7 +178,7 @@ func (c *DeploymentRolloutController) RolloutOneBatchPods(ctx context.Context) (
 
 // CheckOneBatchPods checks to see if the pods are all available according to the rollout plan
 func (c *DeploymentRolloutController) CheckOneBatchPods(ctx context.Context) (bool, error) {
-	if err := c.fetchDeploymentAndItsReplicaSets(ctx); err != nil {
+	if err := c.FetchDeploymentAndItsReplicaSets(ctx); err != nil {
 		// don't fail the rollout just because of we can't get the resource
 		// nolint:nilerr
 		return false, nil
@@ -204,9 +204,7 @@ func (c *DeploymentRolloutController) CheckOneBatchPods(ctx context.Context) (bo
 		"max unavailable pod allowed", maxUnavailable, "target goal", targetGoal, "source goal", sourceGoal,
 		"rolloutStrategy", rolloutStrategy)
 
-	if (rolloutStrategy == v1alpha1.IncreaseFirstRolloutStrategyType && sourcePodCount > sourceGoal) ||
-		(rolloutStrategy == v1alpha1.DecreaseFirstRolloutStrategyType &&
-			int32(maxUnavailable)+readyTargetPodCount < targetGoal) {
+	if c.rolloutStatus.RolloutTargetSize-c.getAllStatusReadyReplicas() > int32(maxUnavailable) {
 		// we haven't met the end goal of this batch, continue to verify
 		klog.InfoS("the batch is not ready yet", "current batch", c.rolloutStatus.CurrentBatch)
 		c.rolloutStatus.RolloutRetry(fmt.Sprintf(
@@ -224,7 +222,7 @@ func (c *DeploymentRolloutController) CheckOneBatchPods(ctx context.Context) (bo
 
 // FinalizeOneBatch makes sure that the rollout status are updated correctly
 func (c *DeploymentRolloutController) FinalizeOneBatch(ctx context.Context) (bool, error) {
-	if err := c.fetchDeploymentAndItsReplicaSets(ctx); err != nil {
+	if err := c.FetchDeploymentAndItsReplicaSets(ctx); err != nil {
 		// don't fail the rollout just because of we can't get the resource
 		// nolint:nilerr
 		return false, nil
@@ -243,7 +241,7 @@ func (c *DeploymentRolloutController) FinalizeOneBatch(ctx context.Context) (boo
 
 // Finalize makes sure the Deployment is all upgraded
 func (c *DeploymentRolloutController) Finalize(ctx context.Context, succeed bool) bool {
-	if err := c.fetchDeploymentAndItsReplicaSets(ctx); err != nil {
+	if err := c.FetchDeploymentAndItsReplicaSets(ctx); err != nil {
 		// don't fail the rollout just because of we can't get the resource
 		return false
 	}
@@ -252,6 +250,9 @@ func (c *DeploymentRolloutController) Finalize(ctx context.Context, succeed bool
 	if _, err := c.releaseDeployment(ctx, &c.deployment); err != nil {
 		return false
 	}
+
+	c.rolloutStatus.StableRevision = c.rolloutStatus.UpdateRevision
+	c.rolloutStatus.UpdateRevision = ""
 
 	// mark the resource finalized
 	//c.rolloutStatus.LastAppliedPodTemplateIdentifier = c.rolloutStatus.NewPodTemplateIdentifier
@@ -262,8 +263,8 @@ func (c *DeploymentRolloutController) Finalize(ctx context.Context, succeed bool
 /* ----------------------------------
 The functions below are helper functions
 ------------------------------------- */
-func (c *DeploymentRolloutController) fetchDeploymentAndItsReplicaSets(ctx context.Context) error {
-	if err := c.client.Get(ctx, c.targetNamespacedName, &c.deployment); err != nil {
+func (c *DeploymentRolloutController) FetchDeploymentAndItsReplicaSets(ctx context.Context) error {
+	if err := c.client.Get(context.TODO(), c.targetNamespacedName, &c.deployment); err != nil {
 		if !apierrors.IsNotFound(err) {
 			c.recorder.Event(c.parentController, v1.EventTypeWarning, "GetDeploymentFailed", err.Error())
 		}
@@ -277,35 +278,29 @@ func (c *DeploymentRolloutController) fetchDeploymentAndItsReplicaSets(ctx conte
 	}
 
 	rsList := &apps.ReplicaSetList{}
-	if err = c.client.List(ctx, rsList, &client.ListOptions{
+	if err = c.client.List(context.TODO(), rsList, &client.ListOptions{
 		Namespace: c.targetNamespacedName.Namespace, LabelSelector: selector}); err != nil {
 		c.recorder.Event(c.parentController, v1.EventTypeWarning, "ListReplicaSetFailed", err.Error())
 		return err
 	}
 
+	var allRSs []*apps.ReplicaSet
 	c.targetReplicaSet, c.sourceReplicaSets = nil, nil
-	deploySpecHash, err := ComputeSpecHash(c.deployment.Spec.Template)
-	if err != nil {
-		c.recorder.Event(c.parentController, v1.EventTypeWarning, "ComputeHashFailed", err.Error())
-		return err
-	}
 	for i := range rsList.Items {
 		rs := &rsList.Items[i]
-		if ownerRef := metav1.GetControllerOf(rs); ownerRef != nil || ownerRef.UID != c.deployment.GetUID() {
+		if ownerRef := metav1.GetControllerOf(rs); ownerRef == nil || ownerRef.UID != c.deployment.GetUID() {
 			continue
 		}
-		if specHash, err := ComputeSpecHash(&rs.Spec.Template); err != nil {
-			c.recorder.Event(c.parentController, v1.EventTypeWarning, "ComputeHashFailed", err.Error())
-			continue
-		} else if specHash == deploySpecHash {
+		allRSs = append(allRSs, rs)
+		if deploymentutil.EqualIgnoreHash(&rs.Spec.Template, &c.deployment.Spec.Template) {
 			c.targetReplicaSet = rs
 		} else {
 			c.sourceReplicaSets = append(c.sourceReplicaSets, rs)
 		}
 	}
 
-	latestReplicaSet, err := c.getNewReplicaSet(&c.deployment, c.sourceReplicaSets, c.sourceReplicaSets, 0, true)
-	if c.targetReplicaSet == nil {
+	latestReplicaSet, err := c.getNewReplicaSet(&c.deployment, allRSs, c.sourceReplicaSets, 0, true)
+	if latestReplicaSet == nil {
 		c.recorder.Event(c.parentController, v1.EventTypeWarning, "CreateNewReplicaSetFailed", err.Error())
 		return err
 	} else if err != nil {
@@ -313,8 +308,11 @@ func (c *DeploymentRolloutController) fetchDeploymentAndItsReplicaSets(ctx conte
 		return err
 	}
 
-	if c.targetReplicaSet != nil && c.targetReplicaSet.UID != latestReplicaSet.UID {
-		c.sourceReplicaSets = append(c.sourceReplicaSets, c.targetReplicaSet)
+	if c.targetReplicaSet == nil || !deploymentutil.EqualIgnoreHash(&c.targetReplicaSet.Spec.Template, &latestReplicaSet.Spec.Template) {
+		klog.V(3).Infof("Create new ReplicaSet for Deployment")
+		if c.targetReplicaSet != nil {
+			c.sourceReplicaSets = append(c.sourceReplicaSets, c.targetReplicaSet)
+		}
 		c.targetReplicaSet = latestReplicaSet
 	}
 
@@ -325,6 +323,14 @@ func (c *DeploymentRolloutController) fetchDeploymentAndItsReplicaSets(ctx conte
 // calculateRolloutTotalSize fetches the Deployment and returns the replicas (not the actual number of pods)
 func (c *DeploymentRolloutController) calculateRolloutTotalSize() (int32, error) {
 	return getDeploymentReplicas(&c.deployment), nil
+}
+
+// calculateRolloutTotalSize fetches the Deployment and returns the replicas (not the actual number of pods)
+func (c *DeploymentRolloutController) GetUpdateRevision() string {
+	if c.targetReplicaSet == nil {
+		return ""
+	}
+	return c.targetReplicaSet.Labels[apps.DefaultDeploymentUniqueLabelKey]
 }
 
 // check if the replicas in all the rollout batches add up to the right number
@@ -349,19 +355,18 @@ func (c *DeploymentRolloutController) calculateCurrentSource(totalSize int32) in
 	return sourceSize
 }
 
-func (c *DeploymentRolloutController) checkAndRecordRevisions() bool {
+func (c *DeploymentRolloutController) checkHealthyAndRecordRevisions() bool {
 	activeRSs := k8scontroller.FilterActiveReplicaSets(c.sourceReplicaSets)
-	c.rolloutStatus.UpdateRevision = c.targetReplicaSet.Labels[apps.ControllerRevisionHashLabelKey]
+	c.rolloutStatus.UpdateRevision = c.targetReplicaSet.Labels[apps.DefaultDeploymentUniqueLabelKey]
 
 	switch len(activeRSs) {
 	case 0:
-		c.rolloutStatus.StableRevision = c.targetReplicaSet.Labels[apps.ControllerRevisionHashLabelKey]
+		c.rolloutStatus.StableRevision = c.targetReplicaSet.Labels[apps.DefaultDeploymentUniqueLabelKey]
 		return true
 	case 1:
-		c.rolloutStatus.StableRevision = activeRSs[0].Labels[apps.ControllerRevisionHashLabelKey]
+		c.rolloutStatus.StableRevision = activeRSs[0].Labels[apps.DefaultDeploymentUniqueLabelKey]
 		return true
 	}
-
 	if c.rolloutStatus.StableRevision == "" {
 		return false
 	}
@@ -369,7 +374,7 @@ func (c *DeploymentRolloutController) checkAndRecordRevisions() bool {
 	for _, rs := range activeRSs {
 		if *rs.Spec.Replicas == 0 {
 			continue
-		} else if rs.Labels[apps.ControllerRevisionHashLabelKey] == c.rolloutStatus.StableRevision {
+		} else if rs.Labels[apps.DefaultDeploymentUniqueLabelKey] == c.rolloutStatus.StableRevision {
 			return true
 		}
 	}
@@ -394,7 +399,7 @@ func (c *DeploymentRolloutController) rolloutBatchFirstHalf(ctx context.Context,
 		if getReplicaSetsReplicas(c.targetReplicaSet) < targetSize {
 			klog.InfoS("set target ReplicaSet replicas", "deploy", c.targetReplicaSet.Name, "targetSize", targetSize)
 			targetSize = integer.Int32Min(targetSize, *c.deployment.Spec.Replicas)
-			_ = c.scaleReplicaSet(ctx, c.targetReplicaSet, targetSize, &c.deployment)
+			_ = c.scaleReplicaSet(context.TODO(), c.targetReplicaSet, targetSize, &c.deployment)
 			c.recorder.Eventf(c.parentController, v1.EventTypeNormal, "Batch Rollout", "Submitted the increase part of upgrade quests for batch %d, target size = %d", c.rolloutStatus.CurrentBatch, targetSize)
 			return false, nil
 		}
@@ -415,7 +420,7 @@ func (c *DeploymentRolloutController) rolloutBatchFirstHalf(ctx context.Context,
 			for _, sourceReplicaSet := range c.sourceReplicaSets {
 				scaleSize := nameToScaleSize[sourceReplicaSet.Name]
 				klog.InfoS("set source ReplicaSet replicas", "source ReplicaSet", sourceReplicaSet.Name, "sourceSize", scaleSize)
-				if err := c.scaleReplicaSet(ctx, sourceReplicaSet, scaleSize, &c.deployment); err != nil {
+				if err := c.scaleReplicaSet(context.TODO(), sourceReplicaSet, scaleSize, &c.deployment); err != nil {
 					return false, err
 				}
 			}
@@ -438,7 +443,7 @@ func (c *DeploymentRolloutController) rolloutBatchSecondHalf(ctx context.Context
 	for _, rs := range allRSs {
 		scaleSize := nameToScaleSize[rs.Name]
 		klog.InfoS("set source ReplicaSet replicas", "source ReplicaSet", rs.Name, "sourceSize", scaleSize)
-		if err := c.scaleReplicaSet(ctx, rs, scaleSize, &c.deployment); err != nil {
+		if err := c.scaleReplicaSet(context.TODO(), rs, scaleSize, &c.deployment); err != nil {
 			return false
 		}
 	}
@@ -566,15 +571,4 @@ func getReplicaSetsStatusReadyReplicas(replicaSets ...*apps.ReplicaSet) int32 {
 		}
 	}
 	return replicas
-}
-
-// ComputeSpecHash computes the hash value of a k8s resource spec
-func ComputeSpecHash(spec interface{}) (string, error) {
-	// compute a hash value of any resource spec
-	specHash, err := hashstructure.Hash(spec, hashstructure.FormatV2, nil)
-	if err != nil {
-		return "", err
-	}
-	specHashLabel := strconv.FormatUint(specHash, 16)
-	return specHashLabel, nil
 }

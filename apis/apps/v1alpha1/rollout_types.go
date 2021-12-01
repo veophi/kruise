@@ -30,6 +30,7 @@ import (
 // +kubebuilder:printcolumn:name="BATCH-STATE",type=string,JSONPath=`.status.batchRollingState`
 // +kubebuilder:printcolumn:name="ROLLING-STATE",type=string,JSONPath=`.status.rollingState`
 // +kubebuilder:printcolumn:name="AGE",type=date,JSONPath=".metadata.creationTimestamp"
+
 type Rollout struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -43,18 +44,12 @@ type RolloutSpec struct {
 	// TargetRevisionName contains the name of the componentRevisionName that we need to upgrade to.
 	TargetRef TargetReference `json:"targetReference"`
 
-	// SourceRevisionName contains the name of the componentRevisionName  that we need to upgrade from.
-	// it can be empty only when it's the first time to deploy the application
-	SourceRevisionName string `json:"sourceRevisionName,omitempty"`
-
-	// ComponentName specify the component name
-	ComponentName string `json:"componentName"`
-
 	// RolloutPlan is the details on how to rollout the resources
 	RolloutPlan RolloutPlan `json:"rolloutPlan"`
 }
 
-// CompRolloutStatus defines the observed state of rollout
+// CompRolloutStatus defines
+//the observed state of rollout
 type CompRolloutStatus struct {
 	RolloutStatus `json:",inline"`
 
@@ -73,4 +68,8 @@ type RolloutList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Rollout `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(&Rollout{}, &RolloutList{})
 }

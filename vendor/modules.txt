@@ -273,7 +273,6 @@ github.com/mailru/easyjson/jwriter
 github.com/matttproud/golang_protobuf_extensions/pbutil
 # github.com/mitchellh/hashstructure/v2 v2.0.1
 ## explicit
-github.com/mitchellh/hashstructure/v2
 # github.com/mitchellh/mapstructure v1.1.2
 github.com/mitchellh/mapstructure
 # github.com/moby/locker v1.0.1
