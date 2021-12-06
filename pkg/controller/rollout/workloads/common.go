@@ -19,7 +19,6 @@ package workloads
 import (
 	"fmt"
 	"github.com/openkruise/kruise/apis/apps/v1alpha1"
-
 	apps "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/klog/v2"
@@ -27,15 +26,15 @@ import (
 
 // verifyBatchesWithRollout verifies that the the sum of all the batch replicas is valid given the total replica
 // each batch replica can be absolute or a percentage
-func verifyBatchesWithRollout(rolloutSpec *v1alpha1.RolloutPlan, totalReplicas int32) error {
+func verifyBatchesWithRollout(rolloutSpec *v1alpha1.ReleasePlan, totalReplicas int32) error {
 	// If rolloutBatches length equal to zero will cause index out of bounds panic, guarantee don't crash whole vela controller
-	if len(rolloutSpec.RolloutBatches) == 0 {
+	if len(rolloutSpec.Batches) == 0 {
 		return fmt.Errorf("the rolloutPlan must have batches")
 	}
 	// if not set, the sum of all the batch sizes minus the last batch cannot be more than the totalReplicas
 	totalRollout := 0
-	for i := 0; i < len(rolloutSpec.RolloutBatches)-1; i++ {
-		rb := rolloutSpec.RolloutBatches[i]
+	for i := 0; i < len(rolloutSpec.Batches)-1; i++ {
+		rb := rolloutSpec.Batches[i]
 		batchSize, _ := intstr.GetValueFromIntOrPercent(&rb.Replicas, int(totalReplicas), true)
 		totalRollout += batchSize
 	}
@@ -46,7 +45,7 @@ func verifyBatchesWithRollout(rolloutSpec *v1alpha1.RolloutPlan, totalReplicas i
 
 	// include the last batch if it has an int value
 	// we ignore the last batch percentage since it is very likely to cause rounding errors
-	lastBatch := rolloutSpec.RolloutBatches[len(rolloutSpec.RolloutBatches)-1]
+	lastBatch := rolloutSpec.Batches[len(rolloutSpec.Batches)-1]
 	if lastBatch.Replicas.Type == intstr.Int {
 		totalRollout += int(lastBatch.Replicas.IntVal)
 		// now that they should be the same
@@ -58,80 +57,23 @@ func verifyBatchesWithRollout(rolloutSpec *v1alpha1.RolloutPlan, totalReplicas i
 	return nil
 }
 
-// verifyBatchesWithScale verifies that executing batches finally reach the target size starting from original size
-func verifyBatchesWithScale(rolloutSpec *v1alpha1.RolloutPlan, originalSize, targetSize int) error {
-	// If rolloutBatches length equal to zero will cause index out of bounds panic, guarantee don't crash whole vela controller
-	if len(rolloutSpec.RolloutBatches) == 0 {
-		return fmt.Errorf("the rolloutPlan must have batches")
-	}
-	totalRollout := originalSize
-	for i := 0; i < len(rolloutSpec.RolloutBatches)-1; i++ {
-		rb := rolloutSpec.RolloutBatches[i]
-		if targetSize > originalSize {
-			batchSize, _ := intstr.GetValueFromIntOrPercent(&rb.Replicas, targetSize-originalSize, true)
-			totalRollout += batchSize
-		} else {
-			batchSize, _ := intstr.GetValueFromIntOrPercent(&rb.Replicas, originalSize-targetSize, true)
-			totalRollout -= batchSize
-		}
-	}
-	//nolint ifElseChain
-	if targetSize > originalSize {
-		if totalRollout >= targetSize {
-			return fmt.Errorf("the rollout plan increased too much, total batch size = %d, targetSize size = %d",
-				totalRollout, targetSize)
-		}
-	} else if targetSize < originalSize {
-		if totalRollout <= targetSize {
-			return fmt.Errorf("the rollout plan reduced too much, total batch size = %d, targetSize size = %d",
-				totalRollout, targetSize)
-		}
-	} else if totalRollout != targetSize {
-		return fmt.Errorf("the rollout plan changed on no-op scale, total batch size = %d, targetSize size = %d",
-			totalRollout, targetSize)
-	}
-	// include the last batch if it has an int value
-	// we ignore the last batch percentage since it is very likely to cause rounding errors
-	lastBatch := rolloutSpec.RolloutBatches[len(rolloutSpec.RolloutBatches)-1]
-	if lastBatch.Replicas.Type == intstr.Int {
-		if targetSize > originalSize {
-			totalRollout += int(lastBatch.Replicas.IntVal)
-		} else {
-			totalRollout -= int(lastBatch.Replicas.IntVal)
-		}
-		// now that they should be the same
-		if totalRollout != targetSize {
-			return fmt.Errorf("the rollout plan batch size mismatch, total batch size = %d, targetSize size = %d",
-				totalRollout, targetSize)
-		}
-	}
-	return nil
-}
-
-func calculateNewBatchTarget(rolloutSpec *v1alpha1.RolloutPlan, originalSize, targetSize, currentBatch int) int {
-	if currentBatch == len(rolloutSpec.RolloutBatches)-1 {
+func calculateNewBatchTarget(rolloutSpec *v1alpha1.ReleasePlan, workloadReplicas, currentBatch int) int {
+	if currentBatch == len(rolloutSpec.Batches)-1 {
 		// special handle the last batch, we ignore the rest of the batch in case there are rounding errors
-		klog.InfoS("use the target size as the total pod target for the last rolling batch",
-			"current batch", currentBatch, "new pod target", targetSize)
-		return targetSize
+		klog.V(3).InfoS("use the target size as the total pod target for the last rolling batch",
+			"current batch", currentBatch, "new pod target", workloadReplicas)
+		return workloadReplicas
 	}
 
-	newPodTarget := originalSize
-	for i := 0; i <= currentBatch && i < len(rolloutSpec.RolloutBatches); i++ {
-		if targetSize > originalSize {
-			batchSize, _ := intstr.GetValueFromIntOrPercent(&rolloutSpec.RolloutBatches[i].Replicas, targetSize-originalSize,
-				true)
-			newPodTarget += batchSize
-		} else {
-			batchSize, _ := intstr.GetValueFromIntOrPercent(&rolloutSpec.RolloutBatches[i].Replicas, originalSize-targetSize,
-				true)
-			newPodTarget -= batchSize
-		}
+	batchSize, _ := intstr.GetValueFromIntOrPercent(&rolloutSpec.Batches[currentBatch].Replicas, workloadReplicas, true)
+	if batchSize > workloadReplicas {
+		klog.Warning("releasePlan has wrong batch replicas, batches[%d].replicas %v is more than workload.replicas %v", currentBatch, batchSize, workloadReplicas)
+		batchSize = workloadReplicas
 	}
 
-	klog.InfoS("calculated the number of new pod size", "current batch", currentBatch,
-		"new pod target", newPodTarget)
-	return newPodTarget
+	klog.V(3).InfoS("calculated the number of new pod size", "current batch", currentBatch,
+		"new pod target", batchSize)
+	return batchSize
 }
 
 func getDeploymentReplicas(deploy *apps.Deployment) int32 {
@@ -142,10 +84,10 @@ func getDeploymentReplicas(deploy *apps.Deployment) int32 {
 	return 0
 }
 
-func getStatefulSetReplicas(statefulSet *apps.StatefulSet) int32 {
+func getCloneSetReplicas(clone *v1alpha1.CloneSet) int32 {
 	// replicas default is 0
-	if statefulSet.Spec.Replicas != nil {
-		return *statefulSet.Spec.Replicas
+	if clone.Spec.Replicas != nil {
+		return *clone.Spec.Replicas
 	}
 	return 0
 }

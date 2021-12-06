@@ -167,6 +167,26 @@ rules:
 - apiGroups:
   - apps.kruise.io
   resources:
+  - batchreleases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps.kruise.io
+  resources:
+  - batchreleases/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - apps.kruise.io
+  resources:
   - broadcastjobs
   verbs:
   - create
@@ -315,26 +335,6 @@ rules:
   - apps.kruise.io
   resources:
   - resourcedistributions/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - apps.kruise.io
-  resources:
-  - rollouts
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - apps.kruise.io
-  resources:
-  - rollouts/status
   verbs:
   - get
   - patch

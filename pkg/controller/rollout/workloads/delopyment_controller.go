@@ -32,9 +32,9 @@ import (
 )
 
 const (
-	StashDeploymentStrategyType   = "stash-strategy-type"
-	StashDeploymentMaxUnavailable = "stash-maxUnavailable"
-	StashDeploymentMaxSurge       = "stash-maxSurge"
+	StashDeploymentStrategyType   = "stash-deployment-strategy-type"
+	StashDeploymentMaxUnavailable = "stash-deployment-maxUnavailable"
+	StashDeploymentMaxSurge       = "stash-deployment-maxSurge"
 )
 
 // deploymentController is the place to hold fields needed for handle Deployment type of workloads
@@ -76,7 +76,7 @@ func (c *deploymentController) claimDeployment(ctx context.Context, deploy *apps
 	// patch the Deployment
 	if err := c.client.Patch(context.TODO(), deploy, deployPatch, client.FieldOwner(c.parentController.GetUID())); err != nil {
 		c.recorder.Eventf(deploy, v1.EventTypeWarning, "DeploymentUpdateError", err.Error())
-		c.rolloutStatus.RolloutRetry(err.Error())
+		c.releaseStatus.RolloutRetry(err.Error())
 		return false, err
 	}
 
@@ -92,12 +92,12 @@ func (c *deploymentController) scaleDeployment(ctx context.Context, deploy *apps
 	// patch the Deployment
 	if err := c.client.Patch(context.TODO(), deploy, deployPatch, client.FieldOwner(c.parentController.GetUID())); err != nil {
 		c.recorder.Eventf(deploy, v1.EventTypeWarning, "DeploymentScale", "Failed to update the deployment %s to the correct target %d, error: %v", deploy.GetName(), size, err)
-		c.rolloutStatus.RolloutRetry(err.Error())
+		c.releaseStatus.RolloutRetry(err.Error())
 		return err
 	}
 
 	klog.InfoS("Submitted upgrade quest for deployment", "deployment",
-		deploy.GetName(), "target replica size", size, "batch", c.rolloutStatus.CurrentBatch)
+		deploy.GetName(), "target replica size", size, "batch", c.releaseStatus.CurrentBatch)
 	return nil
 }
 
@@ -141,7 +141,7 @@ func (c *deploymentController) releaseDeployment(ctx context.Context, deploy *ap
 		newOwnerList = append(newOwnerList, owner)
 	}
 	if !found {
-		klog.V(3).InfoS("the deployment is already released", "deploy", deploy.Name)
+		klog.V(3).InfoS("deployment is already released", "deploy", deploy.Name)
 		return true, nil
 	}
 	deploy.SetOwnerReferences(newOwnerList)
@@ -178,7 +178,7 @@ func (c *deploymentController) releaseDeployment(ctx context.Context, deploy *ap
 	// patch the Deployment
 	if err := c.client.Patch(context.TODO(), deploy, deployPatch, client.FieldOwner(c.parentController.GetUID())); err != nil {
 		c.recorder.Eventf(deploy, v1.EventTypeWarning, "ReleaseDeploymentFailed", err.Error())
-		c.rolloutStatus.RolloutRetry(err.Error())
+		c.releaseStatus.RolloutRetry(err.Error())
 		return false, err
 	}
 

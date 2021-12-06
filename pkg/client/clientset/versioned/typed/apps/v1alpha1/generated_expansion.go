@@ -19,6 +19,8 @@ package v1alpha1
 
 type AdvancedCronJobExpansion interface{}
 
+type BatchReleaseExpansion interface{}
+
 type BroadcastJobExpansion interface{}
 
 type CloneSetExpansion interface{}
@@ -34,8 +36,6 @@ type ImagePullJobExpansion interface{}
 type NodeImageExpansion interface{}
 
 type ResourceDistributionExpansion interface{}
-
-type RolloutExpansion interface{}
 
 type SidecarSetExpansion interface{}
 

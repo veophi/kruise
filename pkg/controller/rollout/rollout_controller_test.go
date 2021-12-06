@@ -26,7 +26,7 @@ import (
 //}
 
 var (
-	rolloutDemo = &appsv1alpha1.Rollout{
+	releaseDemo = &appsv1alpha1.BatchRelease{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: appsv1alpha1.GroupVersion.String(),
 			Kind:       "Rollout",
@@ -35,16 +35,15 @@ var (
 			Name:      "rollout",
 			Namespace: "application",
 		},
-		Spec: appsv1alpha1.RolloutSpec{
+		Spec: appsv1alpha1.BatchReleaseSpec{
 			TargetRef: appsv1alpha1.TargetReference{
-				APIVersion: apps.SchemeGroupVersion.String(),
+				APIVersion: appsv1alpha1.GroupVersion.String(),
 				Kind:       "Deployment",
 				Name:       "deploy",
 			},
-			RolloutPlan: appsv1alpha1.RolloutPlan{
-				RolloutStrategy: appsv1alpha1.IncreaseFirstRolloutStrategyType,
-				NumBatches:      pointer.Int32Ptr(3),
-				RolloutBatches: []appsv1alpha1.RolloutBatch{
+			ReleasePlan: appsv1alpha1.ReleasePlan{
+				Strategy: appsv1alpha1.IncreaseFirstReleaseStrategyType,
+				Batches: []appsv1alpha1.ReleaseBatch{
 					{
 						Replicas:       intstr.FromString("10%"),
 						MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(100)},
@@ -59,6 +58,48 @@ var (
 					},
 				},
 			},
+		},
+	}
+
+	cloneDemo = &appsv1alpha1.CloneSet{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: appsv1alpha1.SchemeGroupVersion.String(),
+			Kind:       "CloneSet",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "clone",
+			Namespace: "application",
+			UID:       types.UID("87076677"),
+			Labels: map[string]string{
+				"app": "busybox",
+			},
+		},
+		Spec: appsv1alpha1.CloneSetSpec{
+			Replicas: pointer.Int32Ptr(100),
+			UpdateStrategy: appsv1alpha1.CloneSetUpdateStrategy{
+				Paused:         true,
+				Partition:      &intstr.IntOrString{Type: intstr.Int, IntVal: int32(1)},
+				MaxSurge:       &intstr.IntOrString{Type: intstr.Int, IntVal: int32(2)},
+				MaxUnavailable: &intstr.IntOrString{Type: intstr.String, StrVal: "25%"},
+			},
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "busybox",
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: containers("latest"),
+				},
+			},
+		},
+		Status: appsv1alpha1.CloneSetStatus{
+			Replicas:             100,
+			ReadyReplicas:        100,
+			UpdatedReplicas:      99,
+			UpdatedReadyReplicas: 99,
+			UpdateRevision:       "2",
+			CurrentRevision:      "1",
 		},
 	}
 
@@ -148,16 +189,16 @@ func containers(version string) []corev1.Container {
 	}
 }
 
-func TestReconcileRollout_Reconcile(t *testing.T) {
+func TestReconcileRollout_DeploymentReconcile(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = apps.AddToScheme(scheme)
 	_ = appsv1alpha1.AddToScheme(scheme)
 
-	rollout := rolloutDemo.DeepCopy()
+	release := releaseDemo.DeepCopy()
 	deployment := deployDemo.DeepCopy()
 	replicaSet := stableReplicaSetDemo.DeepCopy()
 
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(rollout, deployment, replicaSet).Build()
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(release, deployment, replicaSet).Build()
 	fakeRecord := record.NewFakeRecorder(100)
 
 	reconciler := ReconcileRollout{
@@ -167,6 +208,33 @@ func TestReconcileRollout_Reconcile(t *testing.T) {
 	}
 
 	_, _ = reconciler.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{
-		Name: rollout.Name, Namespace: rollout.Namespace,
+		Name: release.Name, Namespace: release.Namespace,
+	}})
+}
+
+func TestReconcileRollout_CloneSetReconcile(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = apps.AddToScheme(scheme)
+	_ = appsv1alpha1.AddToScheme(scheme)
+
+	release := releaseDemo.DeepCopy()
+	release.Spec.TargetRef = appsv1alpha1.TargetReference{
+		APIVersion: appsv1alpha1.SchemeGroupVersion.String(),
+		Kind:       "CloneSet",
+		Name:       "clone",
+	}
+	clone := cloneDemo.DeepCopy()
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(release, clone).Build()
+	fakeRecord := record.NewFakeRecorder(100)
+
+	reconciler := ReconcileRollout{
+		Client:   fakeClient,
+		recorder: fakeRecord,
+		scheme:   scheme,
+	}
+
+	_, _ = reconciler.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{
+		Name: release.Name, Namespace: release.Namespace,
 	}})
 }

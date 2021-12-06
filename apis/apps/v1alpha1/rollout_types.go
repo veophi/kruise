@@ -31,45 +31,31 @@ import (
 // +kubebuilder:printcolumn:name="ROLLING-STATE",type=string,JSONPath=`.status.rollingState`
 // +kubebuilder:printcolumn:name="AGE",type=date,JSONPath=".metadata.creationTimestamp"
 
-type Rollout struct {
+type BatchRelease struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   RolloutSpec       `json:"spec,omitempty"`
-	Status CompRolloutStatus `json:"status,omitempty"`
+	Spec   BatchReleaseSpec   `json:"spec,omitempty"`
+	Status BatchReleaseStatus `json:"status,omitempty"`
 }
 
-// RolloutSpec defines how to describe an update between different compRevision
-type RolloutSpec struct {
+// BatchReleaseSpec defines how to describe an update between different compRevision
+type BatchReleaseSpec struct {
 	// TargetRevisionName contains the name of the componentRevisionName that we need to upgrade to.
 	TargetRef TargetReference `json:"targetReference"`
 
 	// RolloutPlan is the details on how to rollout the resources
-	RolloutPlan RolloutPlan `json:"rolloutPlan"`
+	ReleasePlan ReleasePlan `json:"releasePlan"`
 }
 
-// CompRolloutStatus defines
-//the observed state of rollout
-type CompRolloutStatus struct {
-	RolloutStatus `json:",inline"`
-
-	// LastUpgradedTargetRevision contains the name of the componentRevisionName that we upgraded to
-	// We will restart the rollout if this is not the same as the spec
-	LastUpgradedTargetRevision string `json:"lastTargetRevision"`
-
-	// LastSourceRevision contains the name of the componentRevisionName that we need to upgrade from.
-	// We will restart the rollout if this is not the same as the spec
-	LastSourceRevision string `json:"LastSourceRevision,omitempty"`
-}
-
-// RolloutList contains a list of Rollout
+// BatchReleaseList contains a list of BatchRelease
 // +kubebuilder:object:root=true
-type RolloutList struct {
+type BatchReleaseList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Rollout `json:"items"`
+	Items           []BatchRelease `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&Rollout{}, &RolloutList{})
+	SchemeBuilder.Register(&BatchRelease{}, &BatchReleaseList{})
 }

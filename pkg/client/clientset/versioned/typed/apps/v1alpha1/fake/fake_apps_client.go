@@ -31,6 +31,10 @@ func (c *FakeAppsV1alpha1) AdvancedCronJobs(namespace string) v1alpha1.AdvancedC
 	return &FakeAdvancedCronJobs{c, namespace}
 }
 
+func (c *FakeAppsV1alpha1) BatchReleases(namespace string) v1alpha1.BatchReleaseInterface {
+	return &FakeBatchReleases{c, namespace}
+}
+
 func (c *FakeAppsV1alpha1) BroadcastJobs(namespace string) v1alpha1.BroadcastJobInterface {
 	return &FakeBroadcastJobs{c, namespace}
 }
@@ -61,10 +65,6 @@ func (c *FakeAppsV1alpha1) NodeImages() v1alpha1.NodeImageInterface {
 
 func (c *FakeAppsV1alpha1) ResourceDistributions() v1alpha1.ResourceDistributionInterface {
 	return &FakeResourceDistributions{c}
-}
-
-func (c *FakeAppsV1alpha1) Rollouts(namespace string) v1alpha1.RolloutInterface {
-	return &FakeRollouts{c, namespace}
 }
 
 func (c *FakeAppsV1alpha1) SidecarSets() v1alpha1.SidecarSetInterface {

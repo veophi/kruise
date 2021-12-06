@@ -26,6 +26,7 @@ import (
 type AppsV1alpha1Interface interface {
 	RESTClient() rest.Interface
 	AdvancedCronJobsGetter
+	BatchReleasesGetter
 	BroadcastJobsGetter
 	CloneSetsGetter
 	ContainerRecreateRequestsGetter
@@ -34,7 +35,6 @@ type AppsV1alpha1Interface interface {
 	ImagePullJobsGetter
 	NodeImagesGetter
 	ResourceDistributionsGetter
-	RolloutsGetter
 	SidecarSetsGetter
 	StatefulSetsGetter
 	UnitedDeploymentsGetter
@@ -48,6 +48,10 @@ type AppsV1alpha1Client struct {
 
 func (c *AppsV1alpha1Client) AdvancedCronJobs(namespace string) AdvancedCronJobInterface {
 	return newAdvancedCronJobs(c, namespace)
+}
+
+func (c *AppsV1alpha1Client) BatchReleases(namespace string) BatchReleaseInterface {
+	return newBatchReleases(c, namespace)
 }
 
 func (c *AppsV1alpha1Client) BroadcastJobs(namespace string) BroadcastJobInterface {
@@ -80,10 +84,6 @@ func (c *AppsV1alpha1Client) NodeImages() NodeImageInterface {
 
 func (c *AppsV1alpha1Client) ResourceDistributions() ResourceDistributionInterface {
 	return newResourceDistributions(c)
-}
-
-func (c *AppsV1alpha1Client) Rollouts(namespace string) RolloutInterface {
-	return newRollouts(c, namespace)
 }
 
 func (c *AppsV1alpha1Client) SidecarSets() SidecarSetInterface {

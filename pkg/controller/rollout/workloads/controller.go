@@ -19,6 +19,7 @@ package workloads
 import (
 	"context"
 	"github.com/openkruise/kruise/apis/apps/v1alpha1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -53,13 +54,16 @@ type WorkloadController interface {
 	// For example, we may remove the source object to prevent scalar traits to ever work
 	// and the finalize rollout web hooks will be called after this call succeeds
 	Finalize(ctx context.Context, succeed bool) bool
+
+	ReplicasChangedDuringRelease(ctx context.Context) (bool, error)
+	UpdateRevisionChangedDuringRelease(ctx context.Context) (runtime.Object, bool, error)
 }
 
 type workloadController struct {
 	client           client.Client
 	recorder         record.EventRecorder
-	parentController *v1alpha1.Rollout
+	parentController *v1alpha1.BatchRelease
 
-	rolloutSpec   *v1alpha1.RolloutPlan
-	rolloutStatus *v1alpha1.RolloutStatus
+	releasePlan   *v1alpha1.ReleasePlan
+	releaseStatus *v1alpha1.BatchReleaseStatus
 }

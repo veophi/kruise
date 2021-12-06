@@ -25,6 +25,8 @@ import (
 type Interface interface {
 	// AdvancedCronJobs returns a AdvancedCronJobInformer.
 	AdvancedCronJobs() AdvancedCronJobInformer
+	// BatchReleases returns a BatchReleaseInformer.
+	BatchReleases() BatchReleaseInformer
 	// BroadcastJobs returns a BroadcastJobInformer.
 	BroadcastJobs() BroadcastJobInformer
 	// CloneSets returns a CloneSetInformer.
@@ -41,8 +43,6 @@ type Interface interface {
 	NodeImages() NodeImageInformer
 	// ResourceDistributions returns a ResourceDistributionInformer.
 	ResourceDistributions() ResourceDistributionInformer
-	// Rollouts returns a RolloutInformer.
-	Rollouts() RolloutInformer
 	// SidecarSets returns a SidecarSetInformer.
 	SidecarSets() SidecarSetInformer
 	// StatefulSets returns a StatefulSetInformer.
@@ -67,6 +67,11 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 // AdvancedCronJobs returns a AdvancedCronJobInformer.
 func (v *version) AdvancedCronJobs() AdvancedCronJobInformer {
 	return &advancedCronJobInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// BatchReleases returns a BatchReleaseInformer.
+func (v *version) BatchReleases() BatchReleaseInformer {
+	return &batchReleaseInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
 // BroadcastJobs returns a BroadcastJobInformer.
@@ -107,11 +112,6 @@ func (v *version) NodeImages() NodeImageInformer {
 // ResourceDistributions returns a ResourceDistributionInformer.
 func (v *version) ResourceDistributions() ResourceDistributionInformer {
 	return &resourceDistributionInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
-}
-
-// Rollouts returns a RolloutInformer.
-func (v *version) Rollouts() RolloutInformer {
-	return &rolloutInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
 // SidecarSets returns a SidecarSetInformer.

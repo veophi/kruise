@@ -25,6 +25,14 @@ type AdvancedCronJobListerExpansion interface{}
 // AdvancedCronJobNamespaceLister.
 type AdvancedCronJobNamespaceListerExpansion interface{}
 
+// BatchReleaseListerExpansion allows custom methods to be added to
+// BatchReleaseLister.
+type BatchReleaseListerExpansion interface{}
+
+// BatchReleaseNamespaceListerExpansion allows custom methods to be added to
+// BatchReleaseNamespaceLister.
+type BatchReleaseNamespaceListerExpansion interface{}
+
 // BroadcastJobListerExpansion allows custom methods to be added to
 // BroadcastJobLister.
 type BroadcastJobListerExpansion interface{}
@@ -80,14 +88,6 @@ type NodeImageListerExpansion interface{}
 // ResourceDistributionListerExpansion allows custom methods to be added to
 // ResourceDistributionLister.
 type ResourceDistributionListerExpansion interface{}
-
-// RolloutListerExpansion allows custom methods to be added to
-// RolloutLister.
-type RolloutListerExpansion interface{}
-
-// RolloutNamespaceListerExpansion allows custom methods to be added to
-// RolloutNamespaceLister.
-type RolloutNamespaceListerExpansion interface{}
 
 // SidecarSetListerExpansion allows custom methods to be added to
 // SidecarSetLister.
