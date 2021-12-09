@@ -29,7 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const ByBatchReleaseControlAnnotation = "batch-release-control"
+const BatchReleaseControlAnnotation = "batch-release-control-info"
 const StashCloneSetPartition = "stash-cloneset-updateStrategy-partition"
 
 // cloneSetController is the place to hold fields needed for handle Deployment type of workloads
@@ -41,27 +41,58 @@ type cloneSetController struct {
 // add the parent controller to the owner of the deployment, unpause it and initialize the size
 // before kicking start the update and start from every pod in the old version
 func (c *cloneSetController) claimCloneSet(ctx context.Context, clone *v1alpha1.CloneSet) (bool, error) {
-	releasePatch := client.MergeFrom(c.parentController)
-	refByte, _ := json.Marshal(metav1.NewControllerRef(clone, clone.GetObjectKind().GroupVersionKind()))
-	if c.parentController.Annotations == nil {
-		c.parentController.Annotations = make(map[string]string)
-	}
-	c.parentController.Annotations[ByBatchReleaseControlAnnotation] = string(refByte)
-	if err := c.client.Patch(context.TODO(), c.parentController, releasePatch); err != nil {
-		c.recorder.Eventf(c.parentController, v1.EventTypeWarning, "ReleasePatchFailed", err.Error())
-		c.releaseStatus.RolloutRetry(err.Error())
-		return false, err
+	var controlled bool
+	if controlInfo, ok := clone.Annotations[BatchReleaseControlAnnotation]; ok && controlInfo != "" {
+		ref := &metav1.OwnerReference{}
+		err := json.Unmarshal([]byte(controlInfo), ref)
+		if err == nil && ref.UID == c.parentController.UID {
+			klog.V(3).Info("CloneSet has been controlled by this BatchRelease, no need to claim again")
+			controlled = true
+		} else {
+			klog.Error("Failed to parse controller info from cloneset annotation, error: %v, controller info: %+v", err, *ref)
+		}
 	}
 
-	clonePatch := client.MergeFrom(clone.DeepCopy())
-	if clone.Spec.UpdateStrategy.Partition != nil {
-		by, _ := json.Marshal(clone.Spec.UpdateStrategy.Partition)
-		clone.Annotations[StashCloneSetPartition] = string(by)
-	}
-	clone.Spec.UpdateStrategy.Partition = &intstr.IntOrString{Type: intstr.String, StrVal: "100%"}
-	clone.Spec.UpdateStrategy.Paused = false
+	patch := map[string]interface{}{}
+	switch {
+	case controlled:
+		patch = map[string]interface{}{
+			"spec": map[string]interface{}{
+				"updateStrategy": map[string]interface{}{
+					"paused":    false,
+				},
+			},
+		}
 
-	if err := c.client.Patch(context.TODO(), clone, clonePatch); err != nil {
+	default:
+		patch = map[string]interface{}{
+			"spec": map[string]interface{}{
+				"updateStrategy": map[string]interface{}{
+					"partition": &intstr.IntOrString{Type: intstr.String, StrVal: "100%"},
+					"paused":    false,
+				},
+			},
+		}
+
+		controlInfo := metav1.NewControllerRef(c.parentController, c.parentController.GetObjectKind().GroupVersionKind())
+		controlByte, _ := json.Marshal(controlInfo)
+		patch["metadata"] = map[string]interface{}{
+			"annotations": map[string]string{
+				BatchReleaseControlAnnotation: string(controlByte),
+			},
+		}
+
+		if clone.Spec.UpdateStrategy.Partition != nil {
+			partitionByte, _ := json.Marshal(clone.Spec.UpdateStrategy.Partition)
+			metadata := patch["metadata"].(map[string]interface{})
+			annotations := metadata["annotations"].(map[string]string)
+			annotations[StashCloneSetPartition] = string(partitionByte)
+			annotations[BatchReleaseControlAnnotation] = string(controlByte)
+		}
+	}
+
+	patchByte, _ := json.Marshal(patch)
+	if err := c.client.Patch(context.TODO(), clone, client.RawPatch(types.MergePatchType, patchByte)); err != nil {
 		c.recorder.Eventf(c.parentController, v1.EventTypeWarning, "ClaimCloneSetFailed", err.Error())
 		c.releaseStatus.RolloutRetry(err.Error())
 		return false, err
@@ -72,15 +103,15 @@ func (c *cloneSetController) claimCloneSet(ctx context.Context, clone *v1alpha1.
 }
 
 // remove the parent controller from the deployment's owner list
-func (c *cloneSetController) releaseCloneSet(ctx context.Context, clone *v1alpha1.CloneSet) (bool, error) {
+func (c *cloneSetController) releaseCloneSet(ctx context.Context, clone *v1alpha1.CloneSet, releaseController bool) (bool, error) {
 	var found bool
 	var refByte string
-	if refByte, found = c.parentController.Annotations[ByBatchReleaseControlAnnotation]; found && refByte != "" {
+	if refByte, found = clone.Annotations[BatchReleaseControlAnnotation]; found && refByte != "" {
 		ref := &metav1.OwnerReference{}
 		if err := json.Unmarshal([]byte(refByte), ref); err != nil {
 			found = false
 			klog.Error("failed to decode controller annotations of BatchRelease")
-		} else if ref.UID != clone.UID {
+		} else if ref.UID != c.parentController.UID {
 			found = false
 		}
 	}
@@ -90,26 +121,38 @@ func (c *cloneSetController) releaseCloneSet(ctx context.Context, clone *v1alpha
 		return true, nil
 	}
 
-	patch := fmt.Sprintf(`{"metadata": {"annotations": {"%v": null}}}`, ByBatchReleaseControlAnnotation)
-	if err := c.client.Patch(context.TODO(), c.parentController, client.RawPatch(types.MergePatchType, []byte(patch))); err != nil {
-		c.recorder.Eventf(c.parentController, v1.EventTypeWarning, "ReleaseControllerFailed", err.Error())
-		c.releaseStatus.RolloutRetry(err.Error())
-		return false, err
+	var patchByte string
+	patchSpec := map[string]interface{}{
+		"updateStrategy": map[string]interface{}{
+			"paused": true,
+		},
 	}
 
-	clonePatch := client.MergeFrom(clone.DeepCopy())
-	if by, ok := clone.Annotations[StashCloneSetPartition]; ok {
-		partition := &intstr.IntOrString{}
-		if err := json.Unmarshal([]byte(by), partition); err != nil {
-			klog.Error("failed to decode partition annotations for cloneset")
-		} else {
-			clone.Spec.UpdateStrategy.Partition = partition
-			delete(clone.Annotations, StashCloneSetPartition)
+	switch {
+	case !releaseController:
+		patchSpecByte, _ := json.Marshal(patchSpec)
+		patchByte = fmt.Sprintf(`{"spec":%s}`, string(patchSpecByte))
+
+	default:
+		if by, ok := clone.Annotations[StashCloneSetPartition]; ok && by != "" {
+			partition := &intstr.IntOrString{}
+			if err := json.Unmarshal([]byte(by), partition); err != nil {
+				klog.Error("Failed to decode partition annotations for cloneset")
+			} else {
+				patchSpec = map[string]interface{}{
+					"updateStrategy": map[string]interface{}{
+						"partition": partition,
+						"paused":    true,
+					},
+				}
+			}
 		}
+		patchSpecByte, _ := json.Marshal(patchSpec)
+		patchByte = fmt.Sprintf(`{"metadata":{"annotations":{"%s":null, "%s":null}},"spec":%s}`,
+			BatchReleaseControlAnnotation, StashCloneSetPartition, string(patchSpecByte))
 	}
 
-	clone.Spec.UpdateStrategy.Paused = true
-	if err := c.client.Patch(context.TODO(), clone, clonePatch); err != nil {
+	if err := c.client.Patch(context.TODO(), clone, client.RawPatch(types.MergePatchType, []byte(patchByte))); err != nil {
 		c.recorder.Eventf(c.parentController, v1.EventTypeWarning, "ReleaseCloneSetFailed", err.Error())
 		c.releaseStatus.RolloutRetry(err.Error())
 		return false, err
@@ -121,10 +164,16 @@ func (c *cloneSetController) releaseCloneSet(ctx context.Context, clone *v1alpha
 
 // scale the deployment
 func (c *cloneSetController) patchCloneSetPartition(ctx context.Context, clone *v1alpha1.CloneSet, partition int32) error {
-	clonePatch := client.MergeFrom(clone.DeepCopy())
-	clone.Spec.UpdateStrategy.Partition = &intstr.IntOrString{Type: intstr.Int, IntVal: partition}
+	patch := map[string]interface{}{
+		"spec": map[string]interface{}{
+			"updateStrategy": map[string]interface{}{
+				"partition": &intstr.IntOrString{Type: intstr.Int, IntVal: partition},
+			},
+		},
+	}
 
-	if err := c.client.Patch(context.TODO(), clone, clonePatch); err != nil {
+	patchByte, _ := json.Marshal(patch)
+	if err := c.client.Patch(context.TODO(), clone, client.RawPatch(types.MergePatchType, patchByte)); err != nil {
 		c.recorder.Eventf(c.parentController, v1.EventTypeWarning, "PatchPartitionFailed", "Failed to update the CloneSet to the correct target partition %d, error: %v", partition, err)
 		c.releaseStatus.RolloutRetry(err.Error())
 		return err

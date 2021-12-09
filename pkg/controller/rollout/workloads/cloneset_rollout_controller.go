@@ -126,10 +126,12 @@ func (c *CloneSetRolloutController) RolloutOneBatchPods(ctx context.Context) (bo
 
 	updateSize := c.calculateCurrentTarget(c.releaseStatus.ObservedWorkloadReplicas)
 	stableSize := c.calculateCurrentSource(c.releaseStatus.ObservedWorkloadReplicas)
+	workloadPartition, _ := intstr.GetValueFromIntOrPercent(c.clone.Spec.UpdateStrategy.Partition,
+		int(c.releaseStatus.ObservedWorkloadReplicas), true)
 
-	if c.clone.Status.UpdatedReplicas > updateSize {
+	if c.clone.Status.UpdatedReplicas >= updateSize && int32(workloadPartition) <= stableSize {
 		klog.V(3).InfoS("upgraded one batch, but no need to update partition of cloneset", "current batch",
-			c.releaseStatus.CurrentBatch, "real updateRevision size", c.clone.Status.ReadyReplicas)
+			c.releaseStatus.CurrentBatch, "real updateRevision size", c.clone.Status.UpdatedReplicas)
 		return true, nil
 	}
 
@@ -223,39 +225,40 @@ func (c *CloneSetRolloutController) Finalize(ctx context.Context, succeed bool) 
 		return false
 	}
 
-	if _, err := c.releaseCloneSet(ctx, c.clone); err != nil {
+	if _, err := c.releaseCloneSet(ctx, c.clone, succeed); err != nil {
 		return false
 	}
-
-	c.releaseStatus.StableRevision = c.releaseStatus.UpdateRevision
-	c.releaseStatus.LastUpdateRevision = c.releaseStatus.UpdateRevision
 
 	c.recorder.Eventf(c.parentController, v1.EventTypeNormal, "Rollout Finalized", "Rollout resource are finalized, succeed := %t", succeed)
 	return true
 }
 
-func (c *CloneSetRolloutController) UpdateRevisionChangedDuringRelease(ctx context.Context) (runtime.Object, bool, error) {
+func (c *CloneSetRolloutController) UpdateRevisionChangedDuringRelease(ctx context.Context) (runtime.Object, bool, bool, error) {
 	if err := c.fetchCloneSet(ctx); err != nil {
-		return nil, false, err
+		return nil, false, false, err
+	}
+
+	if c.releaseStatus.ReleasingState == v1alpha1.VerifyingSpecState && c.releaseStatus.UpdateRevision == "" {
+		return c.clone, false, false, nil
 	}
 
 	if c.clone.Status.ObservedGeneration != c.clone.Generation {
-		return c.clone, false, fmt.Errorf("cloneset is reconciling, wait for it to compelete")
+		klog.Warningf("CloneSet is still reconciling, waiting for it to complete, generation: %v, observed: %v", c.clone.Generation, c.clone.Status.ObservedGeneration)
+		return c.clone, false, true, nil
 	}
 
 	if c.clone.Status.UpdateRevision != c.releaseStatus.UpdateRevision {
 		klog.Warningf("Release Controller Observe UpdateRevision Changed: %v -> %v", c.releaseStatus.UpdateRevision, c.clone.Status.UpdateRevision)
-		return c.clone, true, nil
+		return c.clone, true, false, nil
 	}
-	return c.clone, false, nil
+	return c.clone, false, false, nil
 }
 
 func (c *CloneSetRolloutController) ReplicasChangedDuringRelease(ctx context.Context) (bool, error) {
 	if c.releaseStatus.ObservedWorkloadReplicas == -1 {
 		return false, nil
 	}
-	if c.releaseStatus.ReleasingState == v1alpha1.VerifyingSpecState &&
-		c.releaseStatus.UpdateRevision == "" {
+	if c.releaseStatus.ReleasingState == v1alpha1.VerifyingSpecState && c.releaseStatus.UpdateRevision == "" {
 		return false, nil
 	}
 	if c.clone == nil {
@@ -266,7 +269,29 @@ func (c *CloneSetRolloutController) ReplicasChangedDuringRelease(ctx context.Con
 	if *c.clone.Spec.Replicas == c.releaseStatus.ObservedWorkloadReplicas {
 		return false, nil
 	}
+	klog.Warningf("CloneSet replicas changed during releasing, should pause and wait for it to complete")
 	return true, nil
+}
+
+func (c *CloneSetRolloutController) MoveToSuitableBatch(ctx context.Context) int32 {
+	if c.clone == nil {
+		if err := c.fetchCloneSet(ctx); err != nil {
+			return c.releaseStatus.CurrentBatch
+		}
+	}
+
+	workloadPartition, _ := intstr.GetValueFromIntOrPercent(c.clone.Spec.UpdateStrategy.Partition,
+		int(c.releaseStatus.ObservedWorkloadReplicas), true)
+
+	batchCount := len(c.releasePlan.Batches)
+	for i := 0; i < batchCount; i++ {
+		updateGoal := calculateNewBatchTarget(c.releasePlan, int(c.releaseStatus.ObservedWorkloadReplicas), i)
+		stableGoal := int(c.releaseStatus.ObservedWorkloadReplicas) - updateGoal
+		if int(c.clone.Status.UpdatedReplicas) < updateGoal || workloadPartition > stableGoal {
+			return int32(i)
+		}
+	}
+	return c.releaseStatus.CurrentBatch
 }
 
 /* ----------------------------------

@@ -255,18 +255,38 @@ func (c *DeploymentRolloutController) Finalize(ctx context.Context, succeed bool
 	return true
 }
 
-func (c *DeploymentRolloutController) UpdateRevisionChangedDuringRelease(ctx context.Context) (runtime.Object, bool, error) {
+func (c *DeploymentRolloutController) UpdateRevisionChangedDuringRelease(ctx context.Context) (runtime.Object, bool, bool, error) {
 	if err := c.FetchDeploymentAndItsReplicaSets(ctx); err != nil {
 		// don't fail the rollout just because of we can't get the resource
-		return nil, false, err
+		return nil, false, false, err
 	}
 
 	if c.targetReplicaSet.Labels[apps.DefaultDeploymentUniqueLabelKey] != c.releaseStatus.UpdateRevision {
 		klog.Warningf("Release Controller Observe UpdateRevision Changed: %v -> %v", c.targetReplicaSet.Labels[apps.DefaultDeploymentUniqueLabelKey], c.releaseStatus.UpdateRevision)
-		return c.deployment, true, nil
+		return c.deployment, true, false, nil
 	}
 
-	return c.deployment, false, nil
+	return c.deployment, false, false, nil
+}
+
+func (c *DeploymentRolloutController) MoveToSuitableBatch(ctx context.Context) int32 {
+	if c.deployment == nil {
+		if err := c.FetchDeploymentAndItsReplicaSets(ctx); err != nil {
+			return c.releaseStatus.CurrentBatch
+		}
+	}
+
+	batchCount := len(c.releasePlan.Batches)
+	for i := 0; i < batchCount; i++ {
+		updateGoal := int32(calculateNewBatchTarget(c.releasePlan, int(c.releaseStatus.ObservedWorkloadReplicas), i))
+		stableGoal := c.releaseStatus.ObservedWorkloadReplicas - updateGoal
+		updateReplicas := getReplicaSetsReplicas(c.targetReplicaSet)
+		stableReplicas := getReplicaSetsReplicas(c.sourceReplicaSets...)
+		if updateReplicas < updateGoal || stableReplicas > stableGoal {
+			return int32(i)
+		}
+	}
+	return c.releaseStatus.CurrentBatch
 }
 
 /* ----------------------------------

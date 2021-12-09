@@ -157,6 +157,14 @@ func (r *ReconcileRollout) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	rolloutPlanController := NewReleasePlanController(r.Client, r.recorder, rollout, &rollout.Spec.ReleasePlan, &rollout.Status)
 	result, rolloutStatus := rolloutPlanController.Reconcile(context.Background())
 	rolloutStatus.ObservedReleasePlanHash = hashReleasePlanBatches(&rollout.Spec.ReleasePlan)
+
+	defer func() {
+		klog.V(3).InfoS("Finished one round of reconciling release plan", "release state", rolloutStatus.ReleasingState,
+			"batch rolling state", rolloutStatus.ReleasingBatchState, "current batch", rolloutStatus.CurrentBatch,
+			"upgraded Replicas", rolloutStatus.UpgradedReplicas, "ready Replicas", rolloutStatus.UpgradedReadyReplicas,
+			"reconcile result ", result)
+	}()
+
 	return result, r.updateStatus(ctx, rollout, rolloutStatus)
 }
 
@@ -168,8 +176,8 @@ func (r *ReconcileRollout) updateStatus(ctx context.Context, release *appsv1alph
 				Namespace: release.Namespace, Name: release.Name}, fetchedRelease); getErr != nil {
 				return getErr
 			}
-			release.Status = *newStatus
-			return r.Status().Update(ctx, release)
+			fetchedRelease.Status = *newStatus
+			return r.Status().Update(ctx, fetchedRelease)
 		})
 	}
 	return nil

@@ -53,10 +53,11 @@ type WorkloadController interface {
 	// It might depend on if the rollout succeeded or not.
 	// For example, we may remove the source object to prevent scalar traits to ever work
 	// and the finalize rollout web hooks will be called after this call succeeds
-	Finalize(ctx context.Context, succeed bool) bool
+	Finalize(ctx context.Context, releaseController bool) bool
 
+	MoveToSuitableBatch(ctx context.Context) int32
 	ReplicasChangedDuringRelease(ctx context.Context) (bool, error)
-	UpdateRevisionChangedDuringRelease(ctx context.Context) (runtime.Object, bool, error)
+	UpdateRevisionChangedDuringRelease(ctx context.Context) (runtime.Object, bool, bool, error)
 }
 
 type workloadController struct {

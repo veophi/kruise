@@ -33,6 +33,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
+//TODO: plan 被修改后，batch 不能到下一环节，不然会被 pauseSecond block 住
+
 // ReleaseReconcileRequeueTime is the default time to check back if we still have work to do
 const ReleaseReconcileRequeueTime = 5 * time.Second
 
@@ -64,7 +66,12 @@ func NewReleasePlanController(client client.Client, recorder record.EventRecorde
 }
 
 // Reconcile reconciles a release plan
-func (r *Controller) Reconcile(ctx context.Context) (res reconcile.Result, status *v1alpha1.BatchReleaseStatus) {
+func (r *Controller) Reconcile(ctx context.Context) (reconcile.Result, *v1alpha1.BatchReleaseStatus) {
+	status := r.releaseStatus
+	stopReconcile := reconcile.Result{}
+	retryAfterShortDuration := reconcile.Result{RequeueAfter: 500 * time.Microsecond}
+	retryAfterLongDuration := reconcile.Result{RequeueAfter: 5 * time.Second}
+
 	klog.V(3).InfoS("Reconcile the release plan", "release status", r.releaseStatus,
 		"target workload", r.release.Spec.TargetRef.Name)
 
@@ -72,79 +79,60 @@ func (r *Controller) Reconcile(ctx context.Context) (res reconcile.Result, statu
 		r.releaseStatus.ReleasingBatchState, "current batch", r.releaseStatus.CurrentBatch, "upgraded Replicas",
 		r.releaseStatus.UpgradedReplicas, "ready Replicas", r.releaseStatus.UpgradedReadyReplicas)
 
-	defer func() {
-		klog.V(3).InfoS("Finished one round of reconciling release plan", "release state", status.ReleasingState,
-			"batch rolling state", status.ReleasingBatchState, "current batch", status.CurrentBatch,
-			"upgraded Replicas", status.UpgradedReplicas, "ready Replicas", status.UpgradedReadyReplicas,
-			"reconcile result ", res)
-	}()
-	status = r.releaseStatus
-
-	defer func() {
-		stop := reconcile.Result{}
-		longDuration := reconcile.Result{RequeueAfter: 5 * time.Second}
-		shortDuration := reconcile.Result{RequeueAfter: 500 * time.Microsecond}
-
-		switch status.ReleasingState {
-		case v1alpha1.VerifyingSpecState, v1alpha1.InitializingState:
-			res = shortDuration
-		case v1alpha1.RollingInBatchesState:
-			switch status.ReleasingBatchState {
-			case v1alpha1.BatchVerifyingState:
-				res = longDuration
-			default:
-				res = shortDuration
-			}
-		case v1alpha1.RolloutFailingState, v1alpha1.RolloutAbandoningState,
-			v1alpha1.RolloutDeletingState, v1alpha1.FinalisingState:
-			res = shortDuration
-		case v1alpha1.RolloutFailedState, v1alpha1.RolloutSucceedState:
-			res = stop
-		default:
-			res = longDuration
-		}
-	}()
-
 	workloadController, err := r.GetWorkloadController()
 	if err != nil {
 		status.RolloutFailed(err.Error())
 		r.recorder.Event(r.release, v1.EventTypeWarning, "UnsupportedWorkload", err.Error())
-		return
+		return stopReconcile, status
 	}
 
-	workload, changed, err := workloadController.UpdateRevisionChangedDuringRelease(ctx)
+	workload, changed, reconciling, err := workloadController.UpdateRevisionChangedDuringRelease(ctx)
 	switch {
 	case client.IgnoreNotFound(err) != nil:
 		r.recorder.Event(r.release, v1.EventTypeWarning, "GetWorkloadFailed", err.Error())
-		return
+		return retryAfterShortDuration, status
+
 	case workload == nil:
 		r.recorder.Event(r.release, v1.EventTypeWarning, "WorkloadGone", "workload has been deleted")
 		status.StateTransition(v1alpha1.RollingFailedEvent)
-		return
+		return stopReconcile, status
+
+	case reconciling:
+		klog.V(3).Infof("Workload is being reconciled by its controller, wait for reconcile done")
+		return retryAfterShortDuration, status
+
 	case changed:
-		if succeed := workloadController.Finalize(ctx, false); !succeed {
-			return reconcile.Result{RequeueAfter: 500 * time.Microsecond}, nil
+		if succeed := workloadController.Finalize(ctx, true); !succeed {
+			return retryAfterShortDuration, status
 		}
-		klog.Warningf("Workload UpdateRevision changed during releasing")
+		klog.Warningf("Workload UpdateRevision was changed during releasing")
 		status.ResetStatus()
+		return retryAfterShortDuration, status
 	}
 
 	changed, _ = workloadController.ReplicasChangedDuringRelease(ctx)
 	if changed {
 		if succeed := workloadController.Finalize(ctx, false); !succeed {
-			return reconcile.Result{RequeueAfter: 500 * time.Microsecond}, nil
+			return retryAfterShortDuration, status
 		}
-		message := "workload replicas changed during release, try to restart release"
-		r.recorder.Eventf(r.release, v1.EventTypeWarning, "ReplicasChanged", "workload replicas was modified during releasing")
+		message := "workload replicas changed during release, try to restart the release plan"
+		klog.Warning(message)
+		r.recorder.Eventf(r.release, v1.EventTypeWarning, "ReplicasChanged", message)
 		status.RolloutRetry(message)
 		status.ResetStatus()
+		return retryAfterShortDuration, status
 	}
 
 	if r.releaseStatus.ObservedReleasePlanHash != "" && r.releaseStatus.ObservedReleasePlanHash != hashReleasePlanBatches(r.releasePlan) {
-		message := "release plan has changed, will restart the release plan"
-		r.recorder.Eventf(r.release, v1.EventTypeWarning, "ReleasePlanChanged", "release plan was modified during releasing")
+		if succeed := workloadController.Finalize(ctx, false); !succeed {
+			return retryAfterShortDuration, status
+		}
+		message := "release plan has changed, try to restart the release plan"
+		klog.Warning(message)
+		r.recorder.Eventf(r.release, v1.EventTypeWarning, "ReleasePlanChanged", message)
 		status.RolloutRetry(message)
 		status.ResetStatus()
+		return retryAfterShortDuration, status
 	}
 
 	if status.CurrentBatch >= 1 && r.releaseStatus.ReleasingState == v1alpha1.RollingInBatchesState {
@@ -182,7 +170,6 @@ func (r *Controller) Reconcile(ctx context.Context) (res reconcile.Result, statu
 	case v1alpha1.RollingInBatchesState:
 		klog.V(3).Infof("ReleasePlan State Machine into %s state", v1alpha1.RollingInBatchesState)
 		r.reconcileBatchInRolling(ctx, workloadController)
-		r.releaseStatus.ReleasingState = v1alpha1.FinalisingState
 
 	case v1alpha1.RolloutFailingState, v1alpha1.RolloutAbandoningState, v1alpha1.RolloutDeletingState:
 		klog.V(3).Infof("ReleasePlan State Machine into %s state", fmt.Sprintf("%s/%s/%s",
@@ -200,7 +187,8 @@ func (r *Controller) Reconcile(ctx context.Context) (res reconcile.Result, statu
 
 	case v1alpha1.RolloutSucceedState:
 		klog.V(3).Infof("ReleasePlan State Machine into %s state", v1alpha1.RolloutSucceedState)
-		// Nothing to do
+		r.releaseStatus.StableRevision = r.releaseStatus.UpdateRevision
+		r.releaseStatus.LastUpdateRevision = r.releaseStatus.UpdateRevision
 
 	case v1alpha1.RolloutFailedState:
 		klog.V(3).Infof("ReleasePlan State Machine into %s state", v1alpha1.RolloutFailedState)
@@ -212,7 +200,19 @@ func (r *Controller) Reconcile(ctx context.Context) (res reconcile.Result, statu
 		panic(fmt.Sprintf("illegal release status %+v", status))
 	}
 
-	return
+	switch status.ReleasingState {
+	case v1alpha1.RollingInBatchesState:
+		if status.ReleasingBatchState == v1alpha1.BatchVerifyingState {
+			return retryAfterLongDuration, status
+		}
+		return retryAfterShortDuration, status
+	case v1alpha1.InitializingState, v1alpha1.RolloutFailingState, v1alpha1.RolloutAbandoningState,
+		v1alpha1.RolloutDeletingState, v1alpha1.FinalisingState:
+		return retryAfterShortDuration, status
+	case v1alpha1.RolloutFailedState, v1alpha1.RolloutSucceedState:
+		return stopReconcile, status
+	}
+	return retryAfterLongDuration, status
 }
 
 // reconcile logic when we are in the middle of release, we have to go through finalizing state before succeed or fail
@@ -271,7 +271,7 @@ func (r *Controller) reconcileBatchInRolling(ctx context.Context, workloadContro
 
 		// all the pods in the are upgraded and their state are ready
 		// wait to move to the next batch if there are any
-		r.tryMovingToNextBatch()
+		r.tryMovingToNextBatch(workloadController)
 
 	default:
 		klog.V(3).Infof("ReleaseBatch State Machine into %s state", "Unknown")
@@ -291,14 +291,17 @@ func (r *Controller) initializeOneBatch(ctx context.Context) {
 }
 
 // check if we can move to the next batch
-func (r *Controller) tryMovingToNextBatch() {
+func (r *Controller) tryMovingToNextBatch(controller workloads.WorkloadController) {
 	if r.releasePlan.BatchPartition == nil || *r.releasePlan.BatchPartition > r.releaseStatus.CurrentBatch {
 		klog.V(3).InfoS("ready to release the next batch", "current batch", r.releaseStatus.CurrentBatch)
 		r.releaseStatus.StateTransition(v1alpha1.BatchRolloutApprovedEvent)
+		r.releaseStatus.CurrentBatch = controller.MoveToSuitableBatch(context.Background())
 	} else {
 		klog.V(3).InfoS("the current batch is waiting to move on", "current batch",
 			r.releaseStatus.CurrentBatch)
 	}
+	// record this batch finalizedTime
+	r.releaseStatus.LastBatchFinalizedTime.Time = time.Now()
 }
 
 func (r *Controller) finalizeOneBatch(ctx context.Context) {
@@ -312,13 +315,10 @@ func (r *Controller) finalizeOneBatch(ctx context.Context) {
 		//		r.rolloutStatus.UpgradedReadyReplicas)))
 	} else {
 		klog.V(3).InfoS("finished one batch release", "current batch", r.releaseStatus.CurrentBatch)
-		// th
 		//r.recorder.Event(r.parentController, event.Normal("Batch Finalized",
 		//fmt.Sprintf("Batch %d is finalized and ready to go", r.rolloutStatus.CurrentBatch)))
 		r.releaseStatus.StateTransition(v1alpha1.FinishedOneBatchEvent)
 	}
-	// record this batch finalizedTime
-	r.releaseStatus.LastBatchFinalizedTime.Time = time.Now()
 }
 
 // all the common finalize work after we release

@@ -138,25 +138,28 @@ func (s *ConditionedStatus) GetCondition(ct ConditionType) Condition {
 // of the same type. This is a no-op if all supplied conditions are identical,
 // ignoring the last transition time, to those already set.
 func (s *ConditionedStatus) SetConditions(c ...Condition) {
-	for _, new := range c {
-		exists := false
-		for i, existing := range s.Conditions {
-			if existing.Type != new.Type {
-				continue
-			}
+	/*
+		for _, new := range c {
+			exists := false
+			for i, existing := range s.Conditions {
+				if existing.Type != new.Type {
+					continue
+				}
 
-			if existing.Equal(new) {
+				if existing.Equal(new) {
+					exists = true
+					continue
+				}
+
+				s.Conditions[i] = new
 				exists = true
-				continue
 			}
-
-			s.Conditions[i] = new
-			exists = true
+			if !exists {
+				s.Conditions = append(s.Conditions, new)
+			}
 		}
-		if !exists {
-			s.Conditions = append(s.Conditions, new)
-		}
-	}
+	*/
+	s.Conditions = append([]Condition{}, c...)
 }
 
 // Equal returns true if the status is identical to the supplied status,

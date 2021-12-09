@@ -18,6 +18,8 @@ package rollout
 
 import (
 	"context"
+	"github.com/openkruise/kruise/pkg/controller/rollout/workloads"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -60,23 +62,26 @@ func (w workloadEventHandler) Create(evt event.CreateEvent, q workqueue.RateLimi
 
 func (w workloadEventHandler) Update(evt event.UpdateEvent, q workqueue.RateLimitingInterface) {
 	var gvk schema.GroupVersionKind
-	var oldGeneration int64
-	var newGeneration int64
+	var oldAccessor metav1.Object
+	var newAccessor metav1.Object
 
 	var paused bool
+	var statusReplicas int32
 	var updateReplicas int32
 	var workloadReplicas int32
 	switch evt.ObjectNew.(type) {
 	case *appsalphav1.CloneSet:
-		oldGeneration = evt.ObjectOld.(*appsalphav1.CloneSet).Generation
-		newGeneration = evt.ObjectNew.(*appsalphav1.CloneSet).Generation
+		oldAccessor = &evt.ObjectOld.(*appsalphav1.CloneSet).ObjectMeta
+		newAccessor = &evt.ObjectNew.(*appsalphav1.CloneSet).ObjectMeta
+		statusReplicas = evt.ObjectNew.(*appsalphav1.CloneSet).Status.Replicas
 		updateReplicas = evt.ObjectNew.(*appsalphav1.CloneSet).Status.UpdatedReplicas
 		workloadReplicas = *evt.ObjectNew.(*appsalphav1.CloneSet).Spec.Replicas
 		paused = evt.ObjectNew.(*appsalphav1.CloneSet).Spec.UpdateStrategy.Paused
 		gvk = controllerKruiseKindCS
 	case *appsv1.Deployment:
-		oldGeneration = evt.ObjectOld.(*appsv1.Deployment).Generation
-		newGeneration = evt.ObjectNew.(*appsv1.Deployment).Generation
+		oldAccessor = &evt.ObjectOld.(*appsv1.Deployment).ObjectMeta
+		newAccessor = &evt.ObjectNew.(*appsv1.Deployment).ObjectMeta
+		statusReplicas = evt.ObjectNew.(*appsv1.Deployment).Status.Replicas
 		updateReplicas = evt.ObjectNew.(*appsv1.Deployment).Status.UpdatedReplicas
 		workloadReplicas = *evt.ObjectNew.(*appsv1.Deployment).Spec.Replicas
 		paused = evt.ObjectNew.(*appsv1.Deployment).Spec.Paused
@@ -84,23 +89,27 @@ func (w workloadEventHandler) Update(evt event.UpdateEvent, q workqueue.RateLimi
 	default:
 		return
 	}
+	if !paused {
+		return
+	}
 
-	// workload replicas changed, and reconcile corresponding WorkloadSpread
-	if paused && (oldGeneration != newGeneration || updateReplicas != workloadReplicas) {
+	_, controlled := newAccessor.GetAnnotations()[workloads.BatchReleaseControlAnnotation]
+	if oldAccessor.GetGeneration() != newAccessor.GetGeneration() ||
+		(paused && controlled && workloadReplicas == statusReplicas && updateReplicas != workloadReplicas) { // watch for scale event, reconcile when scale done
 		workloadNsn := types.NamespacedName{
 			Namespace: evt.ObjectNew.GetNamespace(),
 			Name:      evt.ObjectNew.GetName(),
 		}
-		ws, err := w.getBatchRelease(workloadNsn, gvk)
+		rs, err := w.getBatchRelease(workloadNsn, gvk)
 		if err != nil {
 			klog.Errorf("unable to get BatchRelease related with %s (%s/%s), err: %v",
 				gvk.Kind, workloadNsn.Namespace, workloadNsn.Name, err)
 			return
 		}
-		if ws != nil {
+		if rs != nil {
 			klog.V(3).Infof("%s (%s/%s) changed generation from %d to %d managed by BatchRelease (%s/%s)",
-				gvk.Kind, workloadNsn.Namespace, workloadNsn.Name, oldGeneration, newGeneration, ws.GetNamespace(), ws.GetName())
-			nsn := types.NamespacedName{Namespace: ws.GetNamespace(), Name: ws.GetName()}
+				gvk.Kind, workloadNsn.Namespace, workloadNsn.Name, oldAccessor.GetGeneration(), newAccessor.GetGeneration(), rs.GetNamespace(), rs.GetName())
+			nsn := types.NamespacedName{Namespace: rs.GetNamespace(), Name: rs.GetName()}
 			q.Add(reconcile.Request{NamespacedName: nsn})
 		}
 	}

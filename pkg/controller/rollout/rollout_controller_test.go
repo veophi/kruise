@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"testing"
+	"time"
 )
 
 //var (
@@ -46,14 +47,17 @@ var (
 				Batches: []appsv1alpha1.ReleaseBatch{
 					{
 						Replicas:       intstr.FromString("10%"),
+						PauseSeconds:   100,
 						MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(100)},
 					},
 					{
 						Replicas:       intstr.FromString("50%"),
+						PauseSeconds:   100,
 						MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(100)},
 					},
 					{
 						Replicas:       intstr.FromString("80%"),
+						PauseSeconds:   100,
 						MaxUnavailable: &intstr.IntOrString{Type: intstr.Int, IntVal: int32(100)},
 					},
 				},
@@ -96,8 +100,8 @@ var (
 		Status: appsv1alpha1.CloneSetStatus{
 			Replicas:             100,
 			ReadyReplicas:        100,
-			UpdatedReplicas:      99,
-			UpdatedReadyReplicas: 99,
+			UpdatedReplicas:      0,
+			UpdatedReadyReplicas: 0,
 			UpdateRevision:       "2",
 			CurrentRevision:      "1",
 		},
@@ -224,6 +228,11 @@ func TestReconcileRollout_CloneSetReconcile(t *testing.T) {
 		Name:       "clone",
 	}
 	clone := cloneDemo.DeepCopy()
+	release.Status.ObservedWorkloadReplicas = *clone.Spec.Replicas
+	release.Status.ObservedReleasePlanHash = "saddsfbjkasdh" // hashReleasePlanBatches(&release.Spec.ReleasePlan)
+	release.Status.ReleasingState = appsv1alpha1.VerifyingSpecState
+	release.Status.UpdateRevision = clone.Status.UpdateRevision
+	release.Status.LastBatchFinalizedTime = metav1.NewTime(time.Now())
 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(release, clone).Build()
 	fakeRecord := record.NewFakeRecorder(100)
