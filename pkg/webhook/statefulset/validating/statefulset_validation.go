@@ -176,7 +176,9 @@ func validateSpecSelector(spec *appsv1beta1.StatefulSetSpec, fldPath *field.Path
 			allErrs = append(allErrs, field.Invalid(fldPath.Root(), spec.Template, fmt.Sprintf("Convert_v1_PodTemplateSpec_To_core_PodTemplateSpec failed: %v", err)))
 			return allErrs
 		}
-		allErrs = append(allErrs, appsvalidation.ValidatePodTemplateSpecForStatefulSet(coreTemplate, selector, fldPath.Child("template"))...)
+		allErrs = append(allErrs, appsvalidation.ValidatePodTemplateSpecForStatefulSet(coreTemplate, selector, fldPath.Child("template"), apivalidation.PodValidationOptions{
+			AllowDownwardAPIHugePages: true, AllowIndivisibleHugePagesValues: true, AllowInvalidPodDeletionCost: true,
+		})...)
 	}
 	return allErrs
 }

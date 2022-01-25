@@ -36,9 +36,9 @@ import (
 	intstrutil "k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
+	schedulecorev1 "k8s.io/component-helpers/scheduling/corev1"
 	"k8s.io/klog/v2"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
-	v1helper "k8s.io/kubernetes/pkg/apis/core/v1/helper"
 	"k8s.io/utils/integer"
 	kubeClient "sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -96,7 +96,7 @@ func NodeShouldRunDaemonPod(node *corev1.Node, ds *appsv1alpha1.DaemonSet) (bool
 
 	if !fitsTaints {
 		// Scheduled daemon pods should continue running if they tolerate NoExecute taint.
-		_, isUntolerated := v1helper.FindMatchingUntoleratedTaint(taints, pod.Spec.Tolerations, func(t *corev1.Taint) bool {
+		_, isUntolerated := schedulecorev1.FindMatchingUntoleratedTaint(taints, pod.Spec.Tolerations, func(t *corev1.Taint) bool {
 			return t.Effect == corev1.TaintEffectNoExecute
 		})
 		return false, !isUntolerated, nil

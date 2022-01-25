@@ -37,7 +37,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
-	"k8s.io/apiserver/pkg/storage/names"
 	"k8s.io/client-go/informers"
 	appsinformers "k8s.io/client-go/informers/apps/v1"
 	coreinformers "k8s.io/client-go/informers/core/v1"
@@ -48,7 +47,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
-	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/controller"
 	kubecontroller "k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/securitycontext"
@@ -115,6 +113,7 @@ func newFakePodControl() *fakePodControl {
 	}
 }
 
+/*
 func (f *fakePodControl) CreatePodsOnNode(nodeName, namespace string, template *corev1.PodTemplateSpec, object runtime.Object, controllerRef *metav1.OwnerReference) error {
 	f.Lock()
 	defer f.Unlock()
@@ -177,6 +176,7 @@ func (f *fakePodControl) CreatePodsWithControllerRef(namespace string, template 
 
 	return nil
 }
+*/
 
 func (f *fakePodControl) DeletePod(namespace string, podID string, object runtime.Object) error {
 	f.Lock()
@@ -257,7 +257,12 @@ func NewDaemonSetController(
 		ReconcileDaemonSet: ReconcileDaemonSet{
 			client:        client,
 			eventRecorder: recorder,
-			podControl:    kubecontroller.RealPodControl{KubeClient: kubeClient, Recorder: recorder},
+			podControl: &util.RealPodControl{
+				RealPodControl: kubecontroller.RealPodControl{
+					KubeClient: kubeClient,
+					Recorder:   recorder,
+				},
+			},
 			crControl: kubecontroller.RealControllerRevisionControl{
 				KubeClient: kubeClient,
 			},

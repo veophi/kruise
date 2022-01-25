@@ -17,7 +17,15 @@ limitations under the License.
 package util
 
 import (
+	"context"
+	"fmt"
 	"strings"
+
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/klog/v2"
+	kubecontroller "k8s.io/kubernetes/pkg/controller"
 
 	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
 	v1 "k8s.io/api/core/v1"
@@ -280,4 +288,93 @@ func ContainsObjectRef(slice []v1.ObjectReference, obj v1.ObjectReference) bool 
 		}
 	}
 	return false
+}
+
+type RealPodControlInterface interface {
+	kubecontroller.PodControlInterface
+	CreatePodsOnNode(nodeName, namespace string, template *v1.PodTemplateSpec, object runtime.Object, controllerRef *metav1.OwnerReference) error
+}
+
+type RealPodControl struct {
+	kubecontroller.RealPodControl
+}
+
+var _ RealPodControlInterface = &RealPodControl{}
+
+func (r *RealPodControl) CreatePodsOnNode(nodeName, namespace string, template *v1.PodTemplateSpec, object runtime.Object, controllerRef *metav1.OwnerReference) error {
+	//if err := ValidateControllerRef(controllerRef); err != nil {
+	//	return err
+	//}
+	return r.createPod(nodeName, namespace, template, object, controllerRef)
+}
+
+func (r *RealPodControl) createPod(nodeName, namespace string, template *v1.PodTemplateSpec, object runtime.Object, controllerRef *metav1.OwnerReference) error {
+	pod, err := kubecontroller.GetPodFromTemplate(template, object, controllerRef)
+	if err != nil {
+		return err
+	}
+	pod.Namespace = namespace
+	if len(nodeName) != 0 {
+		pod.Spec.NodeName = nodeName
+	}
+
+	if labels.Set(pod.Labels).AsSelectorPreValidated().Empty() {
+		return fmt.Errorf("unable to create pods, no labels")
+	}
+
+	// Pod.Name is empty since the Pod uses generated name. We use nodeName as the unique identity
+	// since each node should only contain one job Pod.
+	if _, err := r.KubeClient.CoreV1().Pods(namespace).Create(context.TODO(), pod, metav1.CreateOptions{}); err != nil {
+		r.Recorder.Eventf(object, v1.EventTypeWarning, kubecontroller.FailedCreatePodReason, "Error creating: %v", err)
+		return err
+	}
+
+	accessor, err := meta.Accessor(object)
+	if err != nil {
+		klog.Errorf("parentObject does not have ObjectMeta, %v", err)
+		return nil
+	}
+	klog.Infof("Controller %v created pod %v", accessor.GetName(), pod.Name)
+	r.Recorder.Eventf(object, v1.EventTypeNormal, kubecontroller.SuccessfulCreatePodReason, "Created pod: %v", pod.Name)
+
+	return nil
+}
+
+func ValidateControllerRef(controllerRef *metav1.OwnerReference) error {
+	if controllerRef == nil {
+		return fmt.Errorf("controllerRef is nil")
+	}
+	if len(controllerRef.APIVersion) == 0 {
+		return fmt.Errorf("controllerRef has empty APIVersion")
+	}
+	if len(controllerRef.Kind) == 0 {
+		return fmt.Errorf("controllerRef has empty Kind")
+	}
+	if controllerRef.Controller == nil || *controllerRef.Controller != true {
+		return fmt.Errorf("controllerRef.Controller is not set to true")
+	}
+	if controllerRef.BlockOwnerDeletion == nil || *controllerRef.BlockOwnerDeletion != true {
+		return fmt.Errorf("controllerRef.BlockOwnerDeletion is not set")
+	}
+	return nil
+}
+
+func GetAssignedNode(pod *v1.Pod) string {
+	if pod.Spec.NodeName != "" {
+		return pod.Spec.NodeName
+	}
+	if pod.Spec.Affinity != nil &&
+		pod.Spec.Affinity.NodeAffinity != nil &&
+		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
+		terms := pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+		for _, t := range terms {
+			for _, req := range t.MatchFields {
+				if req.Key == metav1.ObjectNameField && req.Operator == v1.NodeSelectorOpIn && len(req.Values) == 1 {
+					return req.Values[0]
+				}
+			}
+		}
+	}
+	klog.Warningf("Not found assigned node in Pod %s/%s", pod.Namespace, pod.Name)
+	return ""
 }

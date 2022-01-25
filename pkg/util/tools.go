@@ -18,6 +18,9 @@ limitations under the License.
 package util
 
 import (
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	schedulingcorev1 "k8s.io/component-helpers/scheduling/corev1"
 	"math"
 	"sync"
 
@@ -144,4 +147,51 @@ func IsContainerImageEqual(image1, image2 string) bool {
 	}
 
 	return repo1 == repo2 && tag1 == tag2
+}
+
+// PodMatchesNodeSelectorAndAffinityTerms checks whether the pod is schedulable onto nodes according to
+// the requirements in both NodeAffinity and nodeSelector.
+func PodMatchesNodeSelectorAndAffinityTerms(pod *corev1.Pod, node *corev1.Node) bool {
+	// Check if node.Labels match pod.Spec.NodeSelector.
+	if len(pod.Spec.NodeSelector) > 0 {
+		selector := labels.SelectorFromSet(pod.Spec.NodeSelector)
+		if !selector.Matches(labels.Set(node.Labels)) {
+			return false
+		}
+	}
+	if pod.Spec.Affinity == nil {
+		return true
+	}
+	return NodeMatchesNodeAffinity(pod.Spec.Affinity.NodeAffinity, node)
+}
+
+// NodeMatchesNodeAffinity checks whether the Node satisfy the given NodeAffinity.
+func NodeMatchesNodeAffinity(affinity *corev1.NodeAffinity, node *corev1.Node) bool {
+	// 1. nil NodeSelector matches all nodes (i.e. does not filter out any nodes)
+	// 2. nil []NodeSelectorTerm (equivalent to non-nil empty NodeSelector) matches no nodes
+	// 3. zero-length non-nil []NodeSelectorTerm matches no nodes also, just for simplicity
+	// 4. nil []NodeSelectorRequirement (equivalent to non-nil empty NodeSelectorTerm) matches no nodes
+	// 5. zero-length non-nil []NodeSelectorRequirement matches no nodes also, just for simplicity
+	// 6. non-nil empty NodeSelectorRequirement is not allowed
+	if affinity == nil {
+		return true
+	}
+	// Match node selector for requiredDuringSchedulingRequiredDuringExecution.
+	// TODO: Uncomment this block when implement RequiredDuringSchedulingRequiredDuringExecution.
+	// if affinity.RequiredDuringSchedulingRequiredDuringExecution != nil && !nodeMatchesNodeSelector(node, affinity.RequiredDuringSchedulingRequiredDuringExecution) {
+	// 	return false
+	// }
+
+	// Match node selector for requiredDuringSchedulingIgnoredDuringExecution.
+	if affinity.RequiredDuringSchedulingIgnoredDuringExecution != nil && !nodeMatchesNodeSelector(node, affinity.RequiredDuringSchedulingIgnoredDuringExecution) {
+		return false
+	}
+	return true
+}
+
+// nodeMatchesNodeSelector checks if a node's labels satisfy a list of node selector terms,
+// terms are ORed, and an empty list of terms will match nothing.
+func nodeMatchesNodeSelector(node *corev1.Node, nodeSelector *corev1.NodeSelector) bool {
+	matches, _ := schedulingcorev1.MatchNodeSelectorTerms(node, nodeSelector)
+	return matches
 }

@@ -40,12 +40,11 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
+	schedulecorev1 "k8s.io/component-helpers/scheduling/corev1"
 	"k8s.io/klog/v2"
-	v1helper "k8s.io/kubernetes/pkg/apis/core/v1/helper"
 	kubecontroller "k8s.io/kubernetes/pkg/controller"
 	daemonsetutil "k8s.io/kubernetes/pkg/controller/daemon/util"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
-	pluginhelper "k8s.io/kubernetes/pkg/scheduler/framework/plugins/helper"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/nodeaffinity"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/nodename"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/noderesources"
@@ -565,7 +564,7 @@ func getNodesToRunPod(nodes *corev1.NodeList, job *appsv1alpha1.BroadcastJob,
 func (r *ReconcileBroadcastJob) getNodeToPodMap(pods []*corev1.Pod, job *appsv1alpha1.BroadcastJob) map[string]*corev1.Pod {
 	nodeToPodMap := make(map[string]*corev1.Pod)
 	for i, pod := range pods {
-		nodeName := getAssignedNode(pod)
+		nodeName := util.GetAssignedNode(pod)
 		if _, ok := nodeToPodMap[nodeName]; ok {
 			// should not happen
 			klog.Warningf("Duplicated pod %s run on the same node %s. this should not happen.", pod.Name, nodeName)
@@ -593,13 +592,13 @@ func labelsAsMap(job *appsv1alpha1.BroadcastJob) map[string]string {
 //   - PodFitsResources: checks if a node has sufficient resources, such as cpu, memory, gpu, opaque int resources etc to run a pod.
 func checkNodeFitness(pod *corev1.Pod, node *corev1.Node) (bool, error) {
 	nodeInfo := framework.NewNodeInfo()
-	_ = nodeInfo.SetNode(node)
+	nodeInfo.SetNode(node)
 
 	if !nodename.Fits(pod, nodeInfo) {
 		return logPredicateFailedReason(node, framework.NewStatus(framework.UnschedulableAndUnresolvable, nodename.ErrReason))
 	}
 
-	if !pluginhelper.PodMatchesNodeSelectorAndAffinityTerms(pod, node) {
+	if !util.PodMatchesNodeSelectorAndAffinityTerms(pod, node) {
 		return logPredicateFailedReason(node, framework.NewStatus(framework.UnschedulableAndUnresolvable, nodeaffinity.ErrReasonPod))
 	}
 
@@ -607,7 +606,7 @@ func checkNodeFitness(pod *corev1.Pod, node *corev1.Node) (bool, error) {
 		// PodToleratesNodeTaints is only interested in NoSchedule and NoExecute taints.
 		return t.Effect == corev1.TaintEffectNoSchedule || t.Effect == corev1.TaintEffectNoExecute
 	}
-	taint, isUntolerated := v1helper.FindMatchingUntoleratedTaint(node.Spec.Taints, pod.Spec.Tolerations, filterPredicate)
+	taint, isUntolerated := schedulecorev1.FindMatchingUntoleratedTaint(node.Spec.Taints, pod.Spec.Tolerations, filterPredicate)
 	if isUntolerated {
 		errReason := fmt.Sprintf("node(s) had taint {%s: %s}, that the pod didn't tolerate",
 			taint.Key, taint.Value)
@@ -615,7 +614,7 @@ func checkNodeFitness(pod *corev1.Pod, node *corev1.Node) (bool, error) {
 	}
 
 	// If pod tolerate unschedulable taint, it's also tolerate `node.Spec.Unschedulable`.
-	podToleratesUnschedulable := v1helper.TolerationsTolerateTaint(pod.Spec.Tolerations, &corev1.Taint{
+	podToleratesUnschedulable := schedulecorev1.TolerationsTolerateTaint(pod.Spec.Tolerations, &corev1.Taint{
 		Key:    corev1.TaintNodeUnschedulable,
 		Effect: corev1.TaintEffectNoSchedule,
 	})
@@ -623,7 +622,7 @@ func checkNodeFitness(pod *corev1.Pod, node *corev1.Node) (bool, error) {
 		return logPredicateFailedReason(node, framework.NewStatus(framework.UnschedulableAndUnresolvable, nodeunschedulable.ErrReasonUnschedulable))
 	}
 
-	insufficientResources := noderesources.Fits(pod, nodeInfo)
+	insufficientResources := noderesources.Fits(pod, nodeInfo, false)
 	if len(insufficientResources) != 0 {
 		// We will keep all failure reasons.
 		failureReasons := make([]string, 0, len(insufficientResources))
@@ -665,9 +664,9 @@ func (r *ReconcileBroadcastJob) deleteJobPods(job *appsv1alpha1.BroadcastJob, po
 		go func(ix int32) {
 			defer wait.Done()
 			key := types.NamespacedName{Namespace: job.Namespace, Name: job.Name}.String()
-			scaleExpectations.ExpectScale(key, expectations.Delete, getAssignedNode(pods[ix]))
+			scaleExpectations.ExpectScale(key, expectations.Delete, util.GetAssignedNode(pods[ix]))
 			if err := r.Delete(context.TODO(), pods[ix]); err != nil {
-				scaleExpectations.ObserveScale(key, expectations.Delete, getAssignedNode(pods[ix]))
+				scaleExpectations.ObserveScale(key, expectations.Delete, util.GetAssignedNode(pods[ix]))
 				defer utilruntime.HandleError(err)
 				klog.Infof("Failed to delete %v, job %q/%q", pods[ix].Name, job.Namespace, job.Name)
 				errCh <- err
@@ -690,7 +689,7 @@ func (r *ReconcileBroadcastJob) deleteJobPods(job *appsv1alpha1.BroadcastJob, po
 }
 
 func (r *ReconcileBroadcastJob) createPodOnNode(nodeName, namespace string, template *corev1.PodTemplateSpec, object runtime.Object, controllerRef *metav1.OwnerReference) error {
-	if err := validateControllerRef(controllerRef); err != nil {
+	if err := util.ValidateControllerRef(controllerRef); err != nil {
 		return err
 	}
 	return r.createPod(nodeName, namespace, template, object, controllerRef)

@@ -135,7 +135,7 @@ func (dsc *ReconcileDaemonSet) standardRollingUpdate(ds *appsv1alpha1.DaemonSet,
 	// calculate the cluster scope numUnavailable.
 	if numUnavailable >= maxUnavailable {
 		_, oldPods := dsc.getAllDaemonSetPods(ds, nodeToDaemonPods, hash)
-		_, oldUnavailablePods := util.SplitByAvailablePods(ds.Spec.MinReadySeconds, oldPods)
+		_, oldUnavailablePods := SplitByAvailablePods(ds.Spec.MinReadySeconds, oldPods)
 
 		// for oldPods delete all not running pods
 		var oldPodsToDelete []string
@@ -156,7 +156,7 @@ func (dsc *ReconcileDaemonSet) standardRollingUpdate(ds *appsv1alpha1.DaemonSet,
 
 	_, oldPods := dsc.getAllDaemonSetPods(ds, nodeToDaemonPods, hash)
 
-	oldAvailablePods, oldUnavailablePods := util.SplitByAvailablePods(ds.Spec.MinReadySeconds, oldPods)
+	oldAvailablePods, oldUnavailablePods := SplitByAvailablePods(ds.Spec.MinReadySeconds, oldPods)
 
 	// for oldPods delete all not running pods
 	var oldPodsToDelete []string

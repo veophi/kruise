@@ -18,14 +18,12 @@ limitations under the License.
 package broadcastjob
 
 import (
-	"fmt"
 	"time"
 
 	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
-	"k8s.io/kubernetes/pkg/apis/core"
 )
 
 // IsJobFinished returns true when finishing job
@@ -122,43 +120,4 @@ func newCondition(conditionType appsv1alpha1.JobConditionType, reason, message s
 
 func asOwner(job *appsv1alpha1.BroadcastJob) *metav1.OwnerReference {
 	return metav1.NewControllerRef(job, controllerKind)
-}
-
-func validateControllerRef(controllerRef *metav1.OwnerReference) error {
-	if controllerRef == nil {
-		return fmt.Errorf("controllerRef is nil")
-	}
-	if len(controllerRef.APIVersion) == 0 {
-		return fmt.Errorf("controllerRef has empty APIVersion")
-	}
-	if len(controllerRef.Kind) == 0 {
-		return fmt.Errorf("controllerRef has empty Kind")
-	}
-	if controllerRef.Controller == nil || *controllerRef.Controller != true {
-		return fmt.Errorf("controllerRef.Controller is not set to true")
-	}
-	if controllerRef.BlockOwnerDeletion == nil || *controllerRef.BlockOwnerDeletion != true {
-		return fmt.Errorf("controllerRef.BlockOwnerDeletion is not set")
-	}
-	return nil
-}
-
-func getAssignedNode(pod *v1.Pod) string {
-	if pod.Spec.NodeName != "" {
-		return pod.Spec.NodeName
-	}
-	if pod.Spec.Affinity != nil &&
-		pod.Spec.Affinity.NodeAffinity != nil &&
-		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
-		terms := pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
-		for _, t := range terms {
-			for _, req := range t.MatchFields {
-				if req.Key == core.ObjectNameField && req.Operator == v1.NodeSelectorOpIn && len(req.Values) == 1 {
-					return req.Values[0]
-				}
-			}
-		}
-	}
-	klog.Warningf("Not found assigned node in Pod %s/%s", pod.Namespace, pod.Name)
-	return ""
 }

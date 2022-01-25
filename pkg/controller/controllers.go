@@ -23,7 +23,6 @@ import (
 	containerlauchpriority "github.com/openkruise/kruise/pkg/controller/containerlaunchpriority"
 	"github.com/openkruise/kruise/pkg/controller/containerrecreaterequest"
 	"github.com/openkruise/kruise/pkg/controller/daemonset"
-	"github.com/openkruise/kruise/pkg/controller/ephemeraljob"
 	"github.com/openkruise/kruise/pkg/controller/imagepulljob"
 	"github.com/openkruise/kruise/pkg/controller/nodeimage"
 	"github.com/openkruise/kruise/pkg/controller/podreadiness"
@@ -55,7 +54,6 @@ func init() {
 	controllerAddFuncs = append(controllerAddFuncs, podunavailablebudget.Add)
 	controllerAddFuncs = append(controllerAddFuncs, workloadspread.Add)
 	controllerAddFuncs = append(controllerAddFuncs, resourcedistribution.Add)
-	controllerAddFuncs = append(controllerAddFuncs, ephemeraljob.Add)
 	controllerAddFuncs = append(controllerAddFuncs, containerlauchpriority.Add)
 }
 

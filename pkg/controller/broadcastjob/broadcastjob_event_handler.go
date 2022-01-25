@@ -2,6 +2,7 @@ package broadcastjob
 
 import (
 	"context"
+	"github.com/openkruise/kruise/pkg/util"
 
 	v1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -43,7 +44,7 @@ func (p *podEventHandler) Create(evt event.CreateEvent, q workqueue.RateLimiting
 	}
 	if controllerRef := metav1.GetControllerOf(pod); controllerRef != nil && isBroadcastJobController(controllerRef) {
 		key := types.NamespacedName{Namespace: pod.Namespace, Name: controllerRef.Name}.String()
-		scaleExpectations.ObserveScale(key, expectations.Create, getAssignedNode(pod))
+		scaleExpectations.ObserveScale(key, expectations.Create, util.GetAssignedNode(pod))
 		p.enqueueHandler.Create(evt, q)
 	}
 }
@@ -52,7 +53,7 @@ func (p *podEventHandler) Delete(evt event.DeleteEvent, q workqueue.RateLimiting
 	pod := evt.Object.(*v1.Pod)
 	if controllerRef := metav1.GetControllerOf(pod); controllerRef != nil && isBroadcastJobController(controllerRef) {
 		key := types.NamespacedName{Namespace: pod.Namespace, Name: controllerRef.Name}.String()
-		scaleExpectations.ObserveScale(key, expectations.Delete, getAssignedNode(pod))
+		scaleExpectations.ObserveScale(key, expectations.Delete, util.GetAssignedNode(pod))
 		p.enqueueHandler.Delete(evt, q)
 	}
 }

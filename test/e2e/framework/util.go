@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	schedulecorev1 "k8s.io/component-helpers/scheduling/corev1"
 	"net"
 	"net/url"
 	"os/exec"
@@ -49,7 +50,6 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	watchtools "k8s.io/client-go/tools/watch"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
-	v1helper "k8s.io/kubernetes/pkg/apis/core/v1/helper"
 	"k8s.io/kubernetes/pkg/client/conditions"
 	"k8s.io/kubernetes/test/e2e/framework/ginkgowrapper"
 	uexec "k8s.io/utils/exec"
@@ -1080,7 +1080,7 @@ func isNodeUntainted(node *v1.Node) bool {
 		// PodToleratesNodeTaints is only interested in NoSchedule and NoExecute taints.
 		return t.Effect == v1.TaintEffectNoSchedule || t.Effect == v1.TaintEffectNoExecute
 	}
-	_, isUntolerated := v1helper.FindMatchingUntoleratedTaint(node.Spec.Taints, fakePod.Spec.Tolerations, filterPredicate)
+	_, isUntolerated := schedulecorev1.FindMatchingUntoleratedTaint(node.Spec.Taints, fakePod.Spec.Tolerations, filterPredicate)
 	return !isUntolerated
 }
 
