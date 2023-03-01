@@ -58,6 +58,15 @@ var _ = SIGDescribe("workloadspread", func() {
 	var ns string
 	var tester *framework.WorkloadSpreadTester
 
+	IsKubernetesVersionLessThan122 := func() bool {
+		if v, err := c.Discovery().ServerVersion(); err != nil {
+			framework.Logf("Failed to discovery server version: %v", err)
+		} else if minor, err := strconv.Atoi(v.Minor); err != nil || minor < 22 {
+			return true
+		}
+		return false
+	}
+
 	ginkgo.BeforeEach(func() {
 		ns = f.Namespace.Name
 		c = f.ClientSet
@@ -1712,6 +1721,9 @@ var _ = SIGDescribe("workloadspread", func() {
 
 		//test k8s cluster version >= 1.21
 		ginkgo.It("elastic deploy for deployment, zone-a=2, zone-b=nil", func() {
+			if IsKubernetesVersionLessThan122() {
+				ginkgo.Skip("kip this e2e case, it can only run on K8s >= 1.22")
+			}
 			deployment := tester.NewBaseDeployment(ns)
 			// create workloadSpread
 			targetRef := appsv1alpha1.TargetReference{
@@ -2018,6 +2030,5 @@ var _ = SIGDescribe("workloadspread", func() {
 		//
 		//	ginkgo.By("workloadSpread for job, done")
 		//})
-
 	})
 })

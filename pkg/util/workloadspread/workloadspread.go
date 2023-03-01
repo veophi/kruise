@@ -23,6 +23,7 @@ import (
 	"math"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -462,7 +463,7 @@ func (h *Handler) updateSubsetForPod(ws *appsv1alpha1.WorkloadSpread,
 	var err error
 	version := GetPodVersion(pod)
 	subsetStatuses := ws.Status.VersionedSubsetStatuses[version]
-	if subsetStatuses == nil {
+	if len(subsetStatuses) == 0 {
 		subsetStatuses, err = h.initializedSubsetStatuses(ws)
 		if err != nil {
 			return false, nil, "", err
@@ -677,6 +678,9 @@ func (h *Handler) isReferenceEqual(target *appsv1alpha1.TargetReference, owner *
 		rs := &appsv1.ReplicaSet{}
 		err = h.Get(context.TODO(), client.ObjectKey{Namespace: namespace, Name: owner.Name}, rs)
 		if err != nil {
+			if errors.IsNotFound(err) { // to solve the problem of informer latency.
+				return replicaSetNameIsMatched(owner.Name, target.Name)
+			}
 			return false
 		}
 		if rs.UID != owner.UID {
@@ -734,6 +738,12 @@ func getSubsetCondition(ws *appsv1alpha1.WorkloadSpread, subsetName string, cond
 		}
 	}
 	return nil
+}
+
+// replicaSetNameIsMatched return if replicaset name (example: server-daily-xznclkds)
+// matches deployment name (example: server-daily).
+func replicaSetNameIsMatched(rsName, dName string) bool {
+	return rsName[:strings.LastIndex(rsName, "-")] == dName
 }
 
 func GetPodVersion(pod *corev1.Pod) string {

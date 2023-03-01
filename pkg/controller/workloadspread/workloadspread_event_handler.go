@@ -19,10 +19,12 @@ package workloadspread
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -42,9 +44,10 @@ import (
 type EventAction string
 
 const (
-	CreateEventAction EventAction = "Create"
-	UpdateEventAction EventAction = "Update"
-	DeleteEventAction EventAction = "Delete"
+	CreateEventAction            EventAction = "Create"
+	UpdateEventAction            EventAction = "Update"
+	DeleteEventAction            EventAction = "Delete"
+	DeploymentRevisionAnnotation             = "deployment.kubernetes.io/revision"
 )
 
 var _ handler.EventHandler = &podEventHandler{}
@@ -59,7 +62,7 @@ func (p *podEventHandler) Update(evt event.UpdateEvent, q workqueue.RateLimiting
 	oldPod := evt.ObjectOld.(*corev1.Pod)
 	newPod := evt.ObjectNew.(*corev1.Pod)
 
-	if kubecontroller.IsPodActive(oldPod) && !kubecontroller.IsPodActive(newPod) {
+	if kubecontroller.IsPodActive(oldPod) && !kubecontroller.IsPodActive(newPod) || wsutil.GetPodVersion(oldPod) != wsutil.GetPodVersion(newPod) {
 		p.handlePod(q, newPod, UpdateEventAction)
 	}
 }
@@ -110,8 +113,11 @@ func (w workloadEventHandler) Update(evt event.UpdateEvent, q workqueue.RateLimi
 		otherChanges = newObject.Status.UpdateRevision != oldObject.Status.CurrentRevision
 		gvk = controllerKruiseKindCS
 	case *appsv1.Deployment:
-		oldReplicas = *evt.ObjectOld.(*appsv1.Deployment).Spec.Replicas
-		newReplicas = *evt.ObjectNew.(*appsv1.Deployment).Spec.Replicas
+		oldObject := evt.ObjectOld.(*appsv1.Deployment)
+		newObject := evt.ObjectNew.(*appsv1.Deployment)
+		oldReplicas = *oldObject.Spec.Replicas
+		newReplicas = *newObject.Spec.Replicas
+		otherChanges = newObject.Annotations[DeploymentRevisionAnnotation] != oldObject.Annotations[DeploymentRevisionAnnotation]
 		gvk = controllerKindDep
 	case *appsv1.ReplicaSet:
 		oldReplicas = *evt.ObjectOld.(*appsv1.ReplicaSet).Spec.Replicas
@@ -139,7 +145,8 @@ func (w workloadEventHandler) Update(evt event.UpdateEvent, q workqueue.RateLimi
 			Namespace: evt.ObjectNew.GetNamespace(),
 			Name:      evt.ObjectNew.GetName(),
 		}
-		ws, err := w.getWorkloadSpreadForWorkload(workloadNsn, gvk)
+		owner := metav1.GetControllerOfNoCopy(evt.ObjectNew)
+		ws, err := w.getWorkloadSpreadForWorkload(workloadNsn, gvk, owner)
 		if err != nil {
 			klog.Errorf("unable to get WorkloadSpread related with %s (%s/%s), err: %v",
 				gvk.Kind, workloadNsn.Namespace, workloadNsn.Name, err)
@@ -185,7 +192,8 @@ func (w *workloadEventHandler) handleWorkload(q workqueue.RateLimitingInterface,
 		Namespace: obj.GetNamespace(),
 		Name:      obj.GetName(),
 	}
-	ws, err := w.getWorkloadSpreadForWorkload(workloadNsn, gvk)
+	owner := metav1.GetControllerOfNoCopy(obj)
+	ws, err := w.getWorkloadSpreadForWorkload(workloadNsn, gvk, owner)
 	if err != nil {
 		klog.Errorf("unable to get WorkloadSpread related with %s (%s/%s), err: %v",
 			gvk.Kind, workloadNsn.Namespace, workloadNsn.Name, err)
@@ -201,12 +209,23 @@ func (w *workloadEventHandler) handleWorkload(q workqueue.RateLimitingInterface,
 
 func (w *workloadEventHandler) getWorkloadSpreadForWorkload(
 	workloadNamespaceName types.NamespacedName,
-	gvk schema.GroupVersionKind) (*appsv1alpha1.WorkloadSpread, error) {
+	gvk schema.GroupVersionKind, ownerRef *metav1.OwnerReference) (*appsv1alpha1.WorkloadSpread, error) {
 	wsList := &appsv1alpha1.WorkloadSpreadList{}
 	listOptions := &client.ListOptions{Namespace: workloadNamespaceName.Namespace}
 	if err := w.List(context.TODO(), wsList, listOptions); err != nil {
 		klog.Errorf("List WorkloadSpread failed: %s", err.Error())
 		return nil, err
+	}
+
+	// In case of ReplicaSet owned by Deployment, we should consider if the
+	// Deployment is referred by workloadSpread.
+	var ownerKey *types.NamespacedName
+	var ownerGvk schema.GroupVersionKind
+	if ownerRef != nil && reflect.DeepEqual(gvk, controllerKindRS) {
+		ownerGvk = schema.FromAPIVersionAndKind(ownerRef.APIVersion, ownerRef.Kind)
+		if reflect.DeepEqual(ownerGvk, controllerKindDep) {
+			ownerKey = &types.NamespacedName{Namespace: workloadNamespaceName.Namespace, Name: ownerRef.Name}
+		}
 	}
 
 	for _, ws := range wsList.Items {
@@ -219,13 +238,12 @@ func (w *workloadEventHandler) getWorkloadSpreadForWorkload(
 			continue
 		}
 
-		targetGV, err := schema.ParseGroupVersion(targetRef.APIVersion)
-		if err != nil {
-			klog.Errorf("failed to parse targetRef's group version: %s", targetRef.APIVersion)
-			continue
+		// Ignore version
+		targetGk := schema.FromAPIVersionAndKind(targetRef.APIVersion, targetRef.Kind).GroupKind()
+		if reflect.DeepEqual(targetGk, gvk.GroupKind()) && targetRef.Name == workloadNamespaceName.Name {
+			return &ws, nil
 		}
-
-		if targetRef.Kind == gvk.Kind && targetGV.Group == gvk.Group && targetRef.Name == workloadNamespaceName.Name {
+		if ownerKey != nil && reflect.DeepEqual(targetGk, ownerGvk.GroupKind()) && targetRef.Name == ownerKey.Name {
 			return &ws, nil
 		}
 	}

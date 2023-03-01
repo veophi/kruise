@@ -522,10 +522,10 @@ func (r *ReconcileWorkloadSpread) patchFavoriteSubsetMetadataToPod(pod *corev1.P
 func (r *ReconcileWorkloadSpread) calculateWorkloadSpreadStatus(ws *appsv1alpha1.WorkloadSpread,
 	versionedPodMap map[string]map[string][]*corev1.Pod, subsetPodMap map[string][]*corev1.Pod,
 	workloadReplicas int32) (*appsv1alpha1.WorkloadSpreadStatus, map[string][]*corev1.Pod) {
-	// set the generation in the returned status
 	status := appsv1alpha1.WorkloadSpreadStatus{}
+	// set the generation in the returned status
 	status.ObservedGeneration = ws.Generation
-	//status.ObservedWorkloadReplicas = workloadReplicas
+	// status.ObservedWorkloadReplicas = workloadReplicas
 	status.VersionedSubsetStatuses = make(map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus, len(versionedPodMap))
 
 	var scheduleFailedPodMap map[string][]*corev1.Pod
