@@ -147,6 +147,16 @@ var (
 					DeletingPods:    map[string]metav1.Time{},
 				},
 			},
+			VersionedSubsetStatuses: map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+				VersionInsensitive: {
+					{
+						Name:            "subset-a",
+						MissingReplicas: 5,
+						CreatingPods:    map[string]metav1.Time{},
+						DeletingPods:    map[string]metav1.Time{},
+					},
+				},
+			},
 		},
 	}
 )
@@ -183,9 +193,11 @@ func TestWorkloadSpreadCreatePodWithoutFullName(t *testing.T) {
 		DeletingPods:    map[string]metav1.Time{},
 	}
 	ws.Status.SubsetStatuses = append(ws.Status.SubsetStatuses, status)
+	ws.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{}
+	ws.Status.VersionedSubsetStatuses[VersionInsensitive] = ws.Status.SubsetStatuses
 	pod := podDemo.DeepCopy()
 	pod.Name = ""
-	_, suitableSubset, generatedUID := handler.updateSubsetForPod(ws, pod, nil, CreateOperation)
+	_, suitableSubset, generatedUID, _ := handler.updateSubsetForPod(ws, pod, nil, CreateOperation)
 	if generatedUID == "" {
 		t.Fatalf("generate id failed")
 	}
@@ -281,6 +293,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 				workloadSpread.ResourceVersion = "1"
 				workloadSpread.Status.SubsetStatuses[0].MissingReplicas = 4
 				workloadSpread.Status.SubsetStatuses[0].CreatingPods[podDemo.Name] = metav1.Time{Time: defaultTime}
+				workloadSpread.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: workloadSpread.Status.SubsetStatuses,
+				}
 				return workloadSpread
 			},
 		},
@@ -312,6 +327,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 					DeletingPods:    map[string]metav1.Time{},
 				}
 				demo.Status.SubsetStatuses = append(demo.Status.SubsetStatuses, status)
+				demo.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: demo.Status.SubsetStatuses,
+				}
 				return demo
 			},
 			getOperation: func() Operation {
@@ -365,6 +383,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 					DeletingPods:    map[string]metav1.Time{},
 				}
 				demo.Status.SubsetStatuses = append(demo.Status.SubsetStatuses, status)
+				demo.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: demo.Status.SubsetStatuses,
+				}
 				demo.ResourceVersion = "1"
 				return demo
 			},
@@ -377,6 +398,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 			getWorkloadSpread: func() *appsv1alpha1.WorkloadSpread {
 				demo := workloadSpreadDemo.DeepCopy()
 				demo.Status.SubsetStatuses[0].MissingReplicas = 0
+				demo.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: demo.Status.SubsetStatuses,
+				}
 				return demo
 			},
 			getOperation: func() Operation {
@@ -389,6 +413,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 			expectWorkloadSpread: func() *appsv1alpha1.WorkloadSpread {
 				workloadSpread := workloadSpreadDemo.DeepCopy()
 				workloadSpread.Status.SubsetStatuses[0].MissingReplicas = 0
+				workloadSpread.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: workloadSpread.Status.SubsetStatuses,
+				}
 				return workloadSpread
 			},
 		},
@@ -422,6 +449,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 			getWorkloadSpread: func() *appsv1alpha1.WorkloadSpread {
 				demo := workloadSpreadDemo.DeepCopy()
 				demo.Status.SubsetStatuses[0].MissingReplicas = -1
+				demo.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: demo.Status.SubsetStatuses,
+				}
 				return demo
 			},
 			getOperation: func() Operation {
@@ -493,6 +523,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 				workloadSpread := workloadSpreadDemo.DeepCopy()
 				workloadSpread.ResourceVersion = "1"
 				workloadSpread.Status.SubsetStatuses[0].MissingReplicas = -1
+				workloadSpread.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: workloadSpread.Status.SubsetStatuses,
+				}
 				return workloadSpread
 			},
 		},
@@ -505,6 +538,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 				demo := workloadSpreadDemo.DeepCopy()
 				demo.Status.SubsetStatuses[0].MissingReplicas = 4
 				demo.Status.SubsetStatuses[0].CreatingPods[podDemo.Name] = metav1.Time{Time: defaultTime}
+				demo.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: demo.Status.SubsetStatuses,
+				}
 				return demo
 			},
 			getOperation: func() Operation {
@@ -577,6 +613,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 				workloadSpread.ResourceVersion = "1"
 				workloadSpread.Status.SubsetStatuses[0].MissingReplicas = 4
 				workloadSpread.Status.SubsetStatuses[0].CreatingPods[podDemo.Name] = metav1.Time{Time: defaultTime}
+				workloadSpread.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: workloadSpread.Status.SubsetStatuses,
+				}
 				return workloadSpread
 			},
 		},
@@ -590,6 +629,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 			getWorkloadSpread: func() *appsv1alpha1.WorkloadSpread {
 				demo := workloadSpreadDemo.DeepCopy()
 				demo.Status.SubsetStatuses[0].MissingReplicas = 0
+				demo.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: demo.Status.SubsetStatuses,
+				}
 				return demo
 			},
 			getOperation: func() Operation {
@@ -604,6 +646,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 				workloadSpread := workloadSpreadDemo.DeepCopy()
 				workloadSpread.Status.SubsetStatuses[0].MissingReplicas = 1
 				workloadSpread.Status.SubsetStatuses[0].DeletingPods[podDemo.Name] = metav1.Time{Time: defaultTime}
+				workloadSpread.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: workloadSpread.Status.SubsetStatuses,
+				}
 				return workloadSpread
 			},
 		},
@@ -617,6 +662,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 			getWorkloadSpread: func() *appsv1alpha1.WorkloadSpread {
 				demo := workloadSpreadDemo.DeepCopy()
 				demo.Status.SubsetStatuses[0].MissingReplicas = 0
+				demo.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: demo.Status.SubsetStatuses,
+				}
 				return demo
 			},
 			getOperation: func() Operation {
@@ -631,6 +679,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 				workloadSpread := workloadSpreadDemo.DeepCopy()
 				workloadSpread.Status.SubsetStatuses[0].MissingReplicas = 1
 				workloadSpread.Status.SubsetStatuses[0].DeletingPods[podDemo.Name] = metav1.Time{Time: defaultTime}
+				workloadSpread.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: workloadSpread.Status.SubsetStatuses,
+				}
 				return workloadSpread
 			},
 		},
@@ -644,6 +695,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 			getWorkloadSpread: func() *appsv1alpha1.WorkloadSpread {
 				demo := workloadSpreadDemo.DeepCopy()
 				demo.Status.SubsetStatuses[0].MissingReplicas = 0
+				demo.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: demo.Status.SubsetStatuses,
+				}
 				return demo
 			},
 			getOperation: func() Operation {
@@ -657,6 +711,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 			expectWorkloadSpread: func() *appsv1alpha1.WorkloadSpread {
 				workloadSpread := workloadSpreadDemo.DeepCopy()
 				workloadSpread.Status.SubsetStatuses[0].MissingReplicas = 0
+				workloadSpread.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: workloadSpread.Status.SubsetStatuses,
+				}
 				return workloadSpread
 			},
 		},
@@ -670,6 +727,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 			getWorkloadSpread: func() *appsv1alpha1.WorkloadSpread {
 				demo := workloadSpreadDemo.DeepCopy()
 				demo.Status.SubsetStatuses[0].MissingReplicas = 0
+				demo.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: demo.Status.SubsetStatuses,
+				}
 				return demo
 			},
 			getOperation: func() Operation {
@@ -683,6 +743,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 			expectWorkloadSpread: func() *appsv1alpha1.WorkloadSpread {
 				workloadSpread := workloadSpreadDemo.DeepCopy()
 				workloadSpread.Status.SubsetStatuses[0].MissingReplicas = 0
+				workloadSpread.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: workloadSpread.Status.SubsetStatuses,
+				}
 				return workloadSpread
 			},
 		},
@@ -697,6 +760,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 				demo := workloadSpreadDemo.DeepCopy()
 				demo.Status.SubsetStatuses[0].MissingReplicas = 1
 				demo.Status.SubsetStatuses[0].DeletingPods[podDemo.Name] = metav1.Time{Time: defaultTime}
+				demo.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: demo.Status.SubsetStatuses,
+				}
 				return demo
 			},
 			getOperation: func() Operation {
@@ -711,6 +777,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 				workloadSpread := workloadSpreadDemo.DeepCopy()
 				workloadSpread.Status.SubsetStatuses[0].MissingReplicas = 1
 				workloadSpread.Status.SubsetStatuses[0].DeletingPods[podDemo.Name] = metav1.Time{Time: defaultTime}
+				workloadSpread.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: workloadSpread.Status.SubsetStatuses,
+				}
 				return workloadSpread
 			},
 		},
@@ -724,6 +793,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 			getWorkloadSpread: func() *appsv1alpha1.WorkloadSpread {
 				demo := workloadSpreadDemo.DeepCopy()
 				demo.Status.SubsetStatuses[0].MissingReplicas = -1
+				demo.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: demo.Status.SubsetStatuses,
+				}
 				return demo
 			},
 			getOperation: func() Operation {
@@ -737,6 +809,9 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 			expectWorkloadSpread: func() *appsv1alpha1.WorkloadSpread {
 				workloadSpread := workloadSpreadDemo.DeepCopy()
 				workloadSpread.Status.SubsetStatuses[0].MissingReplicas = -1
+				workloadSpread.Status.VersionedSubsetStatuses = map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus{
+					VersionInsensitive: workloadSpread.Status.SubsetStatuses,
+				}
 				return workloadSpread
 			},
 		},
@@ -773,8 +848,8 @@ func TestWorkloadSpreadMutatingPod(t *testing.T) {
 				t.Fatalf("getLatestWorkloadSpread failed: %s", err.Error())
 			}
 			setWorkloadSpreadSubset(latestWS)
-			statusby1, _ := json.Marshal(latestWS.Status)
-			statusby2, _ := json.Marshal(cs.expectWorkloadSpread().Status)
+			statusby1, _ := json.Marshal(latestWS.Status.VersionedSubsetStatuses)
+			statusby2, _ := json.Marshal(cs.expectWorkloadSpread().Status.VersionedSubsetStatuses)
 			if !reflect.DeepEqual(statusby1, statusby2) {
 				fmt.Println(latestWS.Status)
 				fmt.Println(cs.expectWorkloadSpread().Status)

@@ -308,19 +308,19 @@ func (r *ReconcileWorkloadSpread) syncWorkloadSpread(ws *appsv1alpha1.WorkloadSp
 	}
 
 	// group Pods by subset
-	podMap, err := r.groupPod(ws, pods, workloadReplicas)
+	versionedPodMap, subsetPodMap, err := r.groupVersionedPods(ws, pods, workloadReplicas)
 	if err != nil {
 		return err
 	}
 
 	// update deletion-cost for each subset
-	err = r.updateDeletionCost(ws, podMap, workloadReplicas)
+	err = r.updateDeletionCost(ws, versionedPodMap, workloadReplicas)
 	if err != nil {
 		return err
 	}
 
 	// calculate status and reschedule
-	status, scheduleFailedPodMap := r.calculateWorkloadSpreadStatus(ws, podMap, workloadReplicas)
+	status, scheduleFailedPodMap := r.calculateWorkloadSpreadStatus(ws, versionedPodMap, subsetPodMap, workloadReplicas)
 	if status == nil {
 		return nil
 	}
@@ -350,8 +350,33 @@ func getInjectWorkloadSpreadFromPod(pod *corev1.Pod) *wsutil.InjectWorkloadSprea
 	return injectWS
 }
 
-// groupPod returns a map, the key is the name of subset and the value represents the Pods of the corresponding subset.
-func (r *ReconcileWorkloadSpread) groupPod(ws *appsv1alpha1.WorkloadSpread, pods []*corev1.Pod, replicas int32) (map[string][]*corev1.Pod, error) {
+// groupVersionedPods will group pods by pod version and subset
+func (r *ReconcileWorkloadSpread) groupVersionedPods(ws *appsv1alpha1.WorkloadSpread, allPods []*corev1.Pod, replicas int32) (map[string]map[string][]*corev1.Pod, map[string][]*corev1.Pod, error) {
+	versionedPods := map[string][]*corev1.Pod{}
+	for _, pod := range allPods {
+		version := wsutil.GetPodVersion(pod)
+		versionedPods[version] = append(versionedPods[version], pod)
+	}
+
+	subsetPodMap := map[string][]*corev1.Pod{}
+	versionedPodMap := map[string]map[string][]*corev1.Pod{}
+	// group pods by version
+	for version, pods := range versionedPods {
+		// group pods by subset
+		podMap, err := r.groupPodBySubset(ws, pods, replicas)
+		if err != nil {
+			return nil, nil, err
+		}
+		for subset, ps := range podMap {
+			subsetPodMap[subset] = append(subsetPodMap[subset], ps...)
+		}
+		versionedPodMap[version] = podMap
+	}
+	return versionedPodMap, subsetPodMap, nil
+}
+
+// groupPodBySubset returns a map, the key is the name of subset and the value represents the Pods of the corresponding subset.
+func (r *ReconcileWorkloadSpread) groupPodBySubset(ws *appsv1alpha1.WorkloadSpread, pods []*corev1.Pod, replicas int32) (map[string][]*corev1.Pod, error) {
 	podMap := make(map[string][]*corev1.Pod, len(ws.Spec.Subsets)+1)
 	podMap[FakeSubsetName] = []*corev1.Pod{}
 	subsetMissingReplicas := make(map[string]int)
@@ -495,12 +520,27 @@ func (r *ReconcileWorkloadSpread) patchFavoriteSubsetMetadataToPod(pod *corev1.P
 // 1. current WorkloadSpreadStatus
 // 2. a map, the key is the subsetName, the value is the schedule failed Pods belongs to the subset.
 func (r *ReconcileWorkloadSpread) calculateWorkloadSpreadStatus(ws *appsv1alpha1.WorkloadSpread,
-	podMap map[string][]*corev1.Pod, workloadReplicas int32) (*appsv1alpha1.WorkloadSpreadStatus, map[string][]*corev1.Pod) {
+	versionedPodMap map[string]map[string][]*corev1.Pod, subsetPodMap map[string][]*corev1.Pod,
+	workloadReplicas int32) (*appsv1alpha1.WorkloadSpreadStatus, map[string][]*corev1.Pod) {
 	// set the generation in the returned status
 	status := appsv1alpha1.WorkloadSpreadStatus{}
 	status.ObservedGeneration = ws.Generation
-	// status.ObservedWorkloadReplicas = workloadReplicas
-	status.SubsetStatuses = make([]appsv1alpha1.WorkloadSpreadSubsetStatus, len(ws.Spec.Subsets))
+	//status.ObservedWorkloadReplicas = workloadReplicas
+	status.VersionedSubsetStatuses = make(map[string][]appsv1alpha1.WorkloadSpreadSubsetStatus, len(versionedPodMap))
+
+	var scheduleFailedPodMap map[string][]*corev1.Pod
+	status.SubsetStatuses, scheduleFailedPodMap = r.calculateWorkloadSpreadSubsetStatuses(ws, subsetPodMap, workloadReplicas)
+
+	for version, podMap := range versionedPodMap {
+		status.VersionedSubsetStatuses[version], _ = r.calculateWorkloadSpreadSubsetStatuses(ws, podMap, workloadReplicas)
+	}
+
+	return &status, scheduleFailedPodMap
+}
+
+func (r *ReconcileWorkloadSpread) calculateWorkloadSpreadSubsetStatuses(ws *appsv1alpha1.WorkloadSpread,
+	podMap map[string][]*corev1.Pod, workloadReplicas int32) ([]appsv1alpha1.WorkloadSpreadSubsetStatus, map[string][]*corev1.Pod) {
+	subsetStatuses := make([]appsv1alpha1.WorkloadSpreadSubsetStatus, len(ws.Spec.Subsets))
 	scheduleFailedPodMap := make(map[string][]*corev1.Pod)
 
 	// Using a map to restore name and old status of subset, because user could adjust the spec's subset sequence
@@ -545,10 +585,10 @@ func (r *ReconcileWorkloadSpread) calculateWorkloadSpreadStatus(ws *appsv1alpha1
 			removeWorkloadSpreadSubsetCondition(subsetStatus, appsv1alpha1.SubsetSchedulable)
 		}
 
-		status.SubsetStatuses[i] = *subsetStatus
+		subsetStatuses[i] = *subsetStatus
 	}
 
-	return &status, scheduleFailedPodMap
+	return subsetStatuses, scheduleFailedPodMap
 }
 
 // calculateWorkloadSpreadSubsetStatus returns the current subsetStatus for subset.

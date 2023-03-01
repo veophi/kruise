@@ -22,7 +22,10 @@ import (
 	"sort"
 	"strconv"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/klog/v2"
@@ -30,20 +33,95 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
+	"github.com/openkruise/kruise/pkg/controller/cloneset/utils"
+	"github.com/openkruise/kruise/pkg/util"
+	utilclient "github.com/openkruise/kruise/pkg/util/client"
 	wsutil "github.com/openkruise/kruise/pkg/util/workloadspread"
 )
 
+func (r *ReconcileWorkloadSpread) getWorkloadLatestVersion(ws *appsv1alpha1.WorkloadSpread) (string, error) {
+	targetRef := ws.Spec.TargetReference
+	if targetRef == nil {
+		return "", nil
+	}
+
+	gvk := schema.FromAPIVersionAndKind(targetRef.APIVersion, targetRef.Kind)
+	key := types.NamespacedName{Namespace: ws.Namespace, Name: targetRef.Name}
+	object := wsutil.WorkloadExample[gvk].DeepCopyObject().(client.Object)
+	if err := r.Get(context.TODO(), key, object); err != nil {
+		return "", client.IgnoreNotFound(err)
+	}
+
+	switch o := object.(type) {
+	case *appsv1.ReplicaSet:
+		return o.Labels[appsv1.DefaultDeploymentUniqueLabelKey], nil
+
+	case *appsv1alpha1.CloneSet:
+		return utils.GetShortHash(o.Status.UpdateRevision), nil
+
+	case *appsv1.Deployment:
+		rsLister := &appsv1.ReplicaSetList{}
+		selector, err := metav1.LabelSelectorAsSelector(o.Spec.Selector)
+		if err != nil {
+			return "", err
+		}
+		err = r.List(context.TODO(), rsLister, &client.ListOptions{Namespace: ws.Namespace, LabelSelector: selector}, utilclient.DisableDeepCopy)
+		if err != nil {
+			return "", err
+		}
+		for i := range rsLister.Items {
+			rs := &rsLister.Items[i]
+			if rs.DeletionTimestamp.IsZero() && util.EqualIgnoreHash(&o.Spec.Template, &rs.Spec.Template) {
+				return rs.Labels[appsv1.DefaultDeploymentUniqueLabelKey], nil
+			}
+		}
+	}
+
+	// In such case, we don't care about the pod version
+	return wsutil.VersionInsensitive, nil
+}
+
 func (r *ReconcileWorkloadSpread) updateDeletionCost(ws *appsv1alpha1.WorkloadSpread,
-	podMap map[string][]*corev1.Pod,
+	versionedPodMap map[string]map[string][]*corev1.Pod,
 	workloadReplicas int32) error {
 	targetRef := ws.Spec.TargetReference
 	if targetRef == nil || !isEffectiveKindForDeletionCost(targetRef) {
 		return nil
 	}
-	// update Pod's deletion-cost annotation in each subset
-	for idx, subset := range ws.Spec.Subsets {
-		if err := r.syncSubsetPodDeletionCost(ws, &subset, idx, podMap[subset.Name], workloadReplicas); err != nil {
+
+	latestVersion, err := r.getWorkloadLatestVersion(ws)
+	if err != nil {
+		klog.Errorf("Failed to get the latest version for workload in workloadSpread %v, err: %v", klog.KObj(ws), err)
+		return err
+	}
+
+	// To try our best to keep the distribution of workload description during workload rolling:
+	// - to the latest version, we hope to scale down the last subset preferentially;
+	// - to other old versions, we hope to scale down the first subset preferentially;
+	for version, podMap := range versionedPodMap {
+		err = r.updateDeletionCostBySubset(ws, podMap, workloadReplicas, version != latestVersion)
+		if err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func (r *ReconcileWorkloadSpread) updateDeletionCostBySubset(ws *appsv1alpha1.WorkloadSpread,
+	podMap map[string][]*corev1.Pod, workloadReplicas int32, reverseOrder bool) error {
+	// update Pod's deletion-cost annotation in each subset
+	if reverseOrder {
+		subsetNum := len(ws.Spec.Subsets)
+		for idx, subset := range ws.Spec.Subsets {
+			if err := r.syncSubsetPodDeletionCost(ws, &subset, subsetNum-idx-1, podMap[subset.Name], workloadReplicas); err != nil {
+				return err
+			}
+		}
+	} else {
+		for idx, subset := range ws.Spec.Subsets {
+			if err := r.syncSubsetPodDeletionCost(ws, &subset, idx, podMap[subset.Name], workloadReplicas); err != nil {
+				return err
+			}
 		}
 	}
 	// update the deletion-cost annotation for such pods that do not match any real subsets.

@@ -99,11 +99,15 @@ func (w workloadEventHandler) Update(evt event.UpdateEvent, q workqueue.RateLimi
 	var gvk schema.GroupVersionKind
 	var oldReplicas int32
 	var newReplicas int32
+	var otherChanges bool
 
 	switch evt.ObjectNew.(type) {
 	case *appsv1alpha1.CloneSet:
-		oldReplicas = *evt.ObjectOld.(*appsv1alpha1.CloneSet).Spec.Replicas
-		newReplicas = *evt.ObjectNew.(*appsv1alpha1.CloneSet).Spec.Replicas
+		oldObject := evt.ObjectOld.(*appsv1alpha1.CloneSet)
+		newObject := evt.ObjectNew.(*appsv1alpha1.CloneSet)
+		oldReplicas = *oldObject.Spec.Replicas
+		newReplicas = *newObject.Spec.Replicas
+		otherChanges = newObject.Status.UpdateRevision != oldObject.Status.CurrentRevision
 		gvk = controllerKruiseKindCS
 	case *appsv1.Deployment:
 		oldReplicas = *evt.ObjectOld.(*appsv1.Deployment).Spec.Replicas
@@ -130,7 +134,7 @@ func (w workloadEventHandler) Update(evt event.UpdateEvent, q workqueue.RateLimi
 	}
 
 	// workload replicas changed, and reconcile corresponding WorkloadSpread
-	if oldReplicas != newReplicas {
+	if oldReplicas != newReplicas || otherChanges {
 		workloadNsn := types.NamespacedName{
 			Namespace: evt.ObjectNew.GetNamespace(),
 			Name:      evt.ObjectNew.GetName(),
