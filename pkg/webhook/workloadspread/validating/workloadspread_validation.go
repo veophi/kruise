@@ -97,37 +97,38 @@ func validateWorkloadSpreadSpec(obj *appsv1alpha1.WorkloadSpread, fldPath *field
 	} else {
 		if spec.TargetReference.APIVersion == "" || spec.TargetReference.Name == "" || spec.TargetReference.Kind == "" {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("targetRef"), spec.TargetReference, "empty TargetReference is not valid for WorkloadSpread."))
-		} else {
-			switch spec.TargetReference.Kind {
-			case controllerKruiseKindCS.Kind:
-				ok, err := verifyGroupKind(spec.TargetReference, controllerKruiseKindCS.Kind, []string{controllerKruiseKindCS.Group})
-				if !ok || err != nil {
-					allErrs = append(allErrs, field.Invalid(fldPath.Child("targetRef"), spec.TargetReference, "TargetReference is not valid for CloneSet."))
-				}
-			case controllerKindDep.Kind:
-				ok, err := verifyGroupKind(spec.TargetReference, controllerKindDep.Kind, []string{controllerKindDep.Group})
-				if !ok || err != nil {
-					allErrs = append(allErrs, field.Invalid(fldPath.Child("targetRef"), spec.TargetReference, "TargetReference is not valid for Deployment."))
-				}
-			case controllerKindRS.Kind:
-				ok, err := verifyGroupKind(spec.TargetReference, controllerKindRS.Kind, []string{controllerKindRS.Group})
-				if !ok || err != nil {
-					allErrs = append(allErrs, field.Invalid(fldPath.Child("targetRef"), spec.TargetReference, "TargetReference is not valid for ReplicaSet."))
-				}
-			case controllerKindJob.Kind:
-				ok, err := verifyGroupKind(spec.TargetReference, controllerKindJob.Kind, []string{controllerKindJob.Group})
-				if !ok || err != nil {
-					allErrs = append(allErrs, field.Invalid(fldPath.Child("targetRef"), spec.TargetReference, "TargetReference is not valid for Job."))
-				}
-			case controllerKindSts.Kind:
-				ok, err := verifyGroupKind(spec.TargetReference, controllerKindSts.Kind, []string{controllerKindSts.Group, controllerKruiseKindAlphaSts.Group, controllerKruiseKindBetaSts.Group})
-				if !ok || err != nil {
-					allErrs = append(allErrs, field.Invalid(fldPath.Child("targetRef"), spec.TargetReference, "TargetReference is not valid for StatefulSet."))
-				}
-			default:
-				allErrs = append(allErrs, field.Invalid(fldPath.Child("targetRef"), spec.TargetReference, "TargetReference's GroupKind is not permitted."))
-			}
 		}
+		//else {
+		//	switch spec.TargetReference.Kind {
+		//	case controllerKruiseKindCS.Kind:
+		//		ok, err := verifyGroupKind(spec.TargetReference, controllerKruiseKindCS.Kind, []string{controllerKruiseKindCS.Group})
+		//		if !ok || err != nil {
+		//			allErrs = append(allErrs, field.Invalid(fldPath.Child("targetRef"), spec.TargetReference, "TargetReference is not valid for CloneSet."))
+		//		}
+		//	case controllerKindDep.Kind:
+		//		ok, err := verifyGroupKind(spec.TargetReference, controllerKindDep.Kind, []string{controllerKindDep.Group})
+		//		if !ok || err != nil {
+		//			allErrs = append(allErrs, field.Invalid(fldPath.Child("targetRef"), spec.TargetReference, "TargetReference is not valid for Deployment."))
+		//		}
+		//	case controllerKindRS.Kind:
+		//		ok, err := verifyGroupKind(spec.TargetReference, controllerKindRS.Kind, []string{controllerKindRS.Group})
+		//		if !ok || err != nil {
+		//			allErrs = append(allErrs, field.Invalid(fldPath.Child("targetRef"), spec.TargetReference, "TargetReference is not valid for ReplicaSet."))
+		//		}
+		//	case controllerKindJob.Kind:
+		//		ok, err := verifyGroupKind(spec.TargetReference, controllerKindJob.Kind, []string{controllerKindJob.Group})
+		//		if !ok || err != nil {
+		//			allErrs = append(allErrs, field.Invalid(fldPath.Child("targetRef"), spec.TargetReference, "TargetReference is not valid for Job."))
+		//		}
+		//	case controllerKindSts.Kind:
+		//		ok, err := verifyGroupKind(spec.TargetReference, controllerKindSts.Kind, []string{controllerKindSts.Group, controllerKruiseKindAlphaSts.Group, controllerKruiseKindBetaSts.Group})
+		//		if !ok || err != nil {
+		//			allErrs = append(allErrs, field.Invalid(fldPath.Child("targetRef"), spec.TargetReference, "TargetReference is not valid for StatefulSet."))
+		//		}
+		//	default:
+		//		allErrs = append(allErrs, field.Invalid(fldPath.Child("targetRef"), spec.TargetReference, "TargetReference's GroupKind is not permitted."))
+		//	}
+		//}
 	}
 
 	// validate subsets

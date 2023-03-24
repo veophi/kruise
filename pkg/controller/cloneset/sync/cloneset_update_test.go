@@ -19,6 +19,7 @@ package sync
 import (
 	"context"
 	"fmt"
+	v12 "k8s.io/api/networking/v1"
 	"reflect"
 	"testing"
 	"time"
@@ -68,6 +69,7 @@ func (mc *manageCase) initial() []client.Object {
 	for i := range mc.pods {
 		initialObjs = append(initialObjs, mc.pods[i])
 	}
+	v12.NetworkPolicy{}
 
 	for i := range mc.pvcs {
 		initialObjs = append(initialObjs, mc.pvcs[i])

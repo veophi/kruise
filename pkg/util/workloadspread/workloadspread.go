@@ -188,10 +188,13 @@ func (h *Handler) HandlePodCreation(pod *corev1.Pod) (skip bool, err error) {
 		return true, nil
 	}
 	ref := metav1.GetControllerOf(pod)
-	matched, err := matchReference(ref)
-	if err != nil || !matched {
+	if ref == nil {
 		return true, nil
 	}
+	//matched, err := matchReference(ref)
+	//if err != nil || !matched {
+	//	return true, nil
+	//}
 
 	var matchedWS *appsv1alpha1.WorkloadSpread
 	workloadSpreadList := &appsv1alpha1.WorkloadSpreadList{}
@@ -781,7 +784,14 @@ func (h *Handler) getWorkloadReplicas(ws *appsv1alpha1.WorkloadSpread) (int32, e
 		return 0, nil
 	}
 	gvk := schema.FromAPIVersionAndKind(ws.Spec.TargetReference.APIVersion, ws.Spec.TargetReference.Kind)
-	object := WorkloadExample[gvk].DeepCopyObject().(client.Object)
+	example, exist := WorkloadExample[gvk]
+	if !exist || example == nil {
+		return 0, nil // currently, maxReplicas of ws does not support percentage for crd.
+	}
+	object, ok := example.DeepCopyObject().(client.Object)
+	if !ok {
+		return 0, nil // currently, maxReplicas of ws does not support percentage for crd.
+	}
 	err := h.Get(context.TODO(), types.NamespacedName{Namespace: ws.Namespace, Name: ws.Spec.TargetReference.Name}, object)
 	if err != nil {
 		return 0, client.IgnoreNotFound(err)
