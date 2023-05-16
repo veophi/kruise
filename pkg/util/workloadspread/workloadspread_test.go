@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,10 +32,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	utilpointer "k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	appspub "github.com/openkruise/kruise/apis/apps/pub"
 	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
 	appsv1beta1 "github.com/openkruise/kruise/apis/apps/v1beta1"
 	"github.com/openkruise/kruise/pkg/util"
@@ -149,12 +152,195 @@ var (
 			},
 		},
 	}
+
+	template = corev1.PodTemplateSpec{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "unit-test",
+			Name:      "pod-demo",
+			Labels: map[string]string{
+				"app": "demo",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "main",
+					Image: "busybox:1.32",
+				},
+			},
+		},
+	}
+
+	nativeStatefulSet = appsv1.StatefulSet{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: appsv1.SchemeGroupVersion.String(),
+			Kind:       "StatefulSet",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:  "unit-test",
+			Name:       "native-statefulset-demo",
+			Generation: 10,
+			UID:        uuid.NewUUID(),
+		},
+		Spec: appsv1.StatefulSetSpec{
+			Replicas: utilpointer.Int32(10),
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "demo",
+				},
+			},
+			Template: template,
+			UpdateStrategy: appsv1.StatefulSetUpdateStrategy{
+				Type: appsv1.RollingUpdateStatefulSetStrategyType,
+				RollingUpdate: &appsv1.RollingUpdateStatefulSetStrategy{
+					Partition: utilpointer.Int32(5),
+				},
+			},
+		},
+		Status: appsv1.StatefulSetStatus{
+			ObservedGeneration: int64(10),
+			Replicas:           9,
+			ReadyReplicas:      8,
+			UpdatedReplicas:    5,
+			CurrentReplicas:    4,
+			AvailableReplicas:  7,
+			CurrentRevision:    "sts-version1",
+			UpdateRevision:     "sts-version2",
+		},
+	}
+
+	advancedStatefulSet = appsv1beta1.StatefulSet{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: appsv1beta1.SchemeGroupVersion.String(),
+			Kind:       "StatefulSet",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:  "unit-test",
+			Name:       "advanced-statefulset-demo",
+			Generation: 10,
+			UID:        uuid.NewUUID(),
+		},
+		Spec: appsv1beta1.StatefulSetSpec{
+			Replicas: utilpointer.Int32(10),
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "demo",
+				},
+			},
+			Template: template,
+			UpdateStrategy: appsv1beta1.StatefulSetUpdateStrategy{
+				Type: appsv1.RollingUpdateStatefulSetStrategyType,
+				RollingUpdate: &appsv1beta1.RollingUpdateStatefulSetStrategy{
+					Partition:      utilpointer.Int32(5),
+					MaxUnavailable: &intstr.IntOrString{Type: intstr.String, StrVal: "10%"},
+					UnorderedUpdate: &appsv1beta1.UnorderedUpdateStrategy{
+						PriorityStrategy: &appspub.UpdatePriorityStrategy{
+							OrderPriority: []appspub.UpdatePriorityOrderTerm{
+								{
+									OrderedKey: "order-key",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		Status: appsv1beta1.StatefulSetStatus{
+			ObservedGeneration: int64(10),
+			Replicas:           9,
+			ReadyReplicas:      8,
+			UpdatedReplicas:    5,
+			AvailableReplicas:  7,
+			CurrentRevision:    "sts-version1",
+			UpdateRevision:     "sts-version2",
+		},
+	}
+
+	cloneset = appsv1alpha1.CloneSet{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: appsv1alpha1.SchemeGroupVersion.String(),
+			Kind:       "CloneSet",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:  "unit-test",
+			Name:       "cloneset-demo",
+			Generation: 10,
+			UID:        uuid.NewUUID(),
+		},
+		Spec: appsv1alpha1.CloneSetSpec{
+			Replicas: utilpointer.Int32(10),
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "demo",
+				},
+			},
+			Template: template,
+			UpdateStrategy: appsv1alpha1.CloneSetUpdateStrategy{
+				Type:           appsv1alpha1.InPlaceIfPossibleCloneSetUpdateStrategyType,
+				Partition:      &intstr.IntOrString{Type: intstr.String, StrVal: "20%"},
+				MaxUnavailable: &intstr.IntOrString{Type: intstr.String, StrVal: "10%"},
+				PriorityStrategy: &appspub.UpdatePriorityStrategy{
+					OrderPriority: []appspub.UpdatePriorityOrderTerm{
+						{
+							OrderedKey: "order-key",
+						},
+					},
+				},
+			},
+		},
+		Status: appsv1alpha1.CloneSetStatus{
+			ObservedGeneration:   int64(10),
+			Replicas:             9,
+			ReadyReplicas:        8,
+			UpdatedReplicas:      5,
+			UpdatedReadyReplicas: 4,
+			AvailableReplicas:    7,
+			CurrentRevision:      "sts-version1",
+			UpdateRevision:       "sts-version2",
+		},
+	}
+
+	deployment = appsv1.Deployment{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: appsv1.SchemeGroupVersion.String(),
+			Kind:       "Deployment",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:  "unit-test",
+			Name:       "deployment-demo",
+			Generation: 10,
+			UID:        uuid.NewUUID(),
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: utilpointer.Int32(10),
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "demo",
+				},
+			},
+			Template: template,
+			Strategy: appsv1.DeploymentStrategy{
+				Type: appsv1.RollingUpdateDeploymentStrategyType,
+				RollingUpdate: &appsv1.RollingUpdateDeployment{
+					MaxUnavailable: &intstr.IntOrString{Type: intstr.String, StrVal: "10%"},
+				},
+			},
+		},
+		Status: appsv1.DeploymentStatus{
+			ObservedGeneration: int64(10),
+			Replicas:           9,
+			ReadyReplicas:      8,
+			UpdatedReplicas:    5,
+			AvailableReplicas:  7,
+		},
+	}
 )
 
 func init() {
 	scheme = runtime.NewScheme()
 	_ = appsv1alpha1.AddToScheme(scheme)
 	_ = appsv1beta1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 }
 
@@ -868,9 +1054,115 @@ func TestIsReferenceEqual(t *testing.T) {
 
 	for _, cs := range cases {
 		t.Run(cs.name, func(t *testing.T) {
-			h := Handler{}
+			h := Handler{fake.NewClientBuilder().Build()}
 			if h.isReferenceEqual(cs.getTargetRef(), cs.getOwnerRef(), "") != cs.expectEqual {
 				t.Fatalf("isReferenceEqual failed")
+			}
+		})
+	}
+}
+
+func TestIsReferenceEqualIndirectly(t *testing.T) {
+	cases := []struct {
+		name          string
+		TopologyBuild func() (appsv1alpha1.TargetReference, []client.Object)
+		Expect        bool
+	}{
+		{
+			name: "direct",
+			TopologyBuild: func() (appsv1alpha1.TargetReference, []client.Object) {
+				father := cloneset.DeepCopy()
+				son := deployment.DeepCopy()
+				son.SetOwnerReferences([]metav1.OwnerReference{
+					*metav1.NewControllerRef(father, father.GetObjectKind().GroupVersionKind()),
+				})
+				ref := appsv1alpha1.TargetReference{
+					APIVersion: father.APIVersion,
+					Kind:       father.Kind,
+					Name:       father.Name,
+				}
+				return ref, []client.Object{father, son}
+			},
+			Expect: true,
+		},
+		{
+			name: "indirect-2",
+			TopologyBuild: func() (appsv1alpha1.TargetReference, []client.Object) {
+				father := cloneset.DeepCopy()
+				son1 := deployment.DeepCopy()
+				son1.SetOwnerReferences([]metav1.OwnerReference{
+					*metav1.NewControllerRef(father, father.GetObjectKind().GroupVersionKind()),
+				})
+				son2 := nativeStatefulSet.DeepCopy()
+				son2.SetOwnerReferences([]metav1.OwnerReference{
+					*metav1.NewControllerRef(son1, son1.GetObjectKind().GroupVersionKind()),
+				})
+				ref := appsv1alpha1.TargetReference{
+					APIVersion: father.APIVersion,
+					Kind:       father.Kind,
+					Name:       father.Name,
+				}
+				return ref, []client.Object{father, son1, son2}
+			},
+			Expect: true,
+		},
+		{
+			name: "indirect-3",
+			TopologyBuild: func() (appsv1alpha1.TargetReference, []client.Object) {
+				father := cloneset.DeepCopy()
+				son1 := deployment.DeepCopy()
+				son1.SetOwnerReferences([]metav1.OwnerReference{
+					*metav1.NewControllerRef(father, father.GetObjectKind().GroupVersionKind()),
+				})
+				son2 := nativeStatefulSet.DeepCopy()
+				son2.SetOwnerReferences([]metav1.OwnerReference{
+					*metav1.NewControllerRef(son1, son1.GetObjectKind().GroupVersionKind()),
+				})
+				son3 := advancedStatefulSet.DeepCopy()
+				son3.SetOwnerReferences([]metav1.OwnerReference{
+					*metav1.NewControllerRef(son2, son2.GetObjectKind().GroupVersionKind()),
+				})
+				ref := appsv1alpha1.TargetReference{
+					APIVersion: father.APIVersion,
+					Kind:       father.Kind,
+					Name:       father.Name,
+				}
+				return ref, []client.Object{father, son1, son2, son3}
+			},
+			Expect: true,
+		},
+		{
+			name: "indirect-3-false",
+			TopologyBuild: func() (appsv1alpha1.TargetReference, []client.Object) {
+				father := cloneset.DeepCopy()
+				son1 := deployment.DeepCopy()
+				son2 := nativeStatefulSet.DeepCopy()
+				son2.SetOwnerReferences([]metav1.OwnerReference{
+					*metav1.NewControllerRef(son1, son1.GetObjectKind().GroupVersionKind()),
+				})
+				son3 := advancedStatefulSet.DeepCopy()
+				son3.SetOwnerReferences([]metav1.OwnerReference{
+					*metav1.NewControllerRef(son2, son2.GetObjectKind().GroupVersionKind()),
+				})
+				ref := appsv1alpha1.TargetReference{
+					APIVersion: father.APIVersion,
+					Kind:       father.Kind,
+					Name:       father.Name,
+				}
+				return ref, []client.Object{father, son1, son2, son3}
+			},
+			Expect: false,
+		},
+	}
+	for _, cs := range cases {
+		t.Run(cs.name, func(t *testing.T) {
+			ref, objects := cs.TopologyBuild()
+			son := objects[len(objects)-1]
+			cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+			handler := &Handler{Client: cli}
+			result := handler.isReferenceEqual(&ref, metav1.GetControllerOfNoCopy(son), son.GetNamespace())
+			if result != cs.Expect {
+				t.Fatalf("unexpected error")
 			}
 		})
 	}

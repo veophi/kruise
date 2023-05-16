@@ -36,6 +36,7 @@ import (
 func (r *ControllerFinder) GetPodsForRef(apiVersion, kind, ns, name string, active bool) ([]*corev1.Pod, int32, error) {
 	var workloadUIDs []types.UID
 	var workloadReplicas int32
+	var labelSelector *metav1.LabelSelector
 	switch kind {
 	// ReplicaSet
 	case ControllerKindRS.Kind:
@@ -66,6 +67,7 @@ func (r *ControllerFinder) GetPodsForRef(apiVersion, kind, ns, name string, acti
 			return nil, 0, nil
 		}
 		workloadReplicas = obj.Scale
+		labelSelector = obj.Selector
 		// try to get replicaSets
 		rss, err := r.getReplicaSetsForObject(obj)
 		if err != nil {
@@ -83,16 +85,11 @@ func (r *ControllerFinder) GetPodsForRef(apiVersion, kind, ns, name string, acti
 		return nil, workloadReplicas, nil
 	}
 
-	// List all Pods owned by workload UID.
-	matchedPods := make([]*corev1.Pod, 0)
-	for _, uid := range workloadUIDs {
+	listPods := func(listOption *client.ListOptions) ([]*corev1.Pod, error) {
+		matchedPods := make([]*corev1.Pod, 0)
 		podList := &corev1.PodList{}
-		listOption := &client.ListOptions{
-			Namespace:     ns,
-			FieldSelector: fields.SelectorFromSet(fields.Set{fieldindex.IndexNameForOwnerRefUID: string(uid)}),
-		}
 		if err := r.List(context.TODO(), podList, listOption, utilclient.DisableDeepCopy); err != nil {
-			return nil, -1, err
+			return nil, err
 		}
 		for i := range podList.Items {
 			pod := &podList.Items[i]
@@ -102,8 +99,34 @@ func (r *ControllerFinder) GetPodsForRef(apiVersion, kind, ns, name string, acti
 			}
 			matchedPods = append(matchedPods, pod)
 		}
+		return matchedPods, nil
 	}
 
+	var err error
+	var matchedPods []*corev1.Pod
+	for _, uid := range workloadUIDs {
+		listOption := client.ListOptions{
+			Namespace:     ns,
+			FieldSelector: fields.SelectorFromSet(fields.Set{fieldindex.IndexNameForOwnerRefUID: string(uid)}),
+		}
+		pods, err := listPods(&listOption)
+		if err != nil {
+			return nil, -1, err
+		}
+		matchedPods = append(matchedPods, pods...)
+	}
+
+	if labelSelector != nil && len(matchedPods) == 0 { // try again using label selector for scale sub-resource
+		selector, _ := metav1.LabelSelectorAsSelector(labelSelector)
+		listOption := client.ListOptions{
+			Namespace:     ns,
+			LabelSelector: selector,
+		}
+		matchedPods, err = listPods(&listOption)
+		if err != nil {
+			return nil, -1, err
+		}
+	}
 	return matchedPods, workloadReplicas, nil
 }
 
