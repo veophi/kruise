@@ -20,6 +20,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"reflect"
 	"testing"
 	"time"
@@ -334,6 +336,8 @@ var (
 			AvailableReplicas:  7,
 		},
 	}
+
+	unStruct, _ = runtime.DefaultUnstructuredConverter.ToUnstructured(advancedStatefulSet)
 )
 
 func init() {
@@ -1062,17 +1066,20 @@ func TestIsReferenceEqual(t *testing.T) {
 	}
 }
 
-func TestIsReferenceEqualIndirectly(t *testing.T) {
+func TestIsReferenceEqual2(t *testing.T) {
+	const mockedAPIVersion = "mock.kruise.io/v1"
+	const mockedKindGameServer = "GameServer"
+	const mockedKindGameServerSet = "GameServerSet"
 	cases := []struct {
 		name          string
 		TopologyBuild func() (appsv1alpha1.TargetReference, []client.Object)
 		Expect        bool
 	}{
 		{
-			name: "direct",
+			name: "pod is owned by cloneset directly, target is cloneset",
 			TopologyBuild: func() (appsv1alpha1.TargetReference, []client.Object) {
 				father := cloneset.DeepCopy()
-				son := deployment.DeepCopy()
+				son := podDemo.DeepCopy()
 				son.SetOwnerReferences([]metav1.OwnerReference{
 					*metav1.NewControllerRef(father, father.GetObjectKind().GroupVersionKind()),
 				})
@@ -1086,76 +1093,55 @@ func TestIsReferenceEqualIndirectly(t *testing.T) {
 			Expect: true,
 		},
 		{
-			name: "indirect-2",
+			name: "pod is owned by unstructured-1, unstructured-1 is owned by unstructured-2, target is unstructured-2",
 			TopologyBuild: func() (appsv1alpha1.TargetReference, []client.Object) {
-				father := cloneset.DeepCopy()
-				son1 := deployment.DeepCopy()
-				son1.SetOwnerReferences([]metav1.OwnerReference{
+				grandfather := &unstructured.Unstructured{Object: unStruct}
+				grandfather.SetGroupVersionKind(schema.FromAPIVersionAndKind(mockedAPIVersion, mockedKindGameServerSet))
+				father := &unstructured.Unstructured{Object: unStruct}
+				father.SetGroupVersionKind(schema.FromAPIVersionAndKind(mockedAPIVersion, mockedKindGameServer))
+				father.SetOwnerReferences([]metav1.OwnerReference{
+					*metav1.NewControllerRef(grandfather, grandfather.GetObjectKind().GroupVersionKind()),
+				})
+				son := podDemo.DeepCopy()
+				son.SetOwnerReferences([]metav1.OwnerReference{
 					*metav1.NewControllerRef(father, father.GetObjectKind().GroupVersionKind()),
 				})
-				son2 := nativeStatefulSet.DeepCopy()
-				son2.SetOwnerReferences([]metav1.OwnerReference{
-					*metav1.NewControllerRef(son1, son1.GetObjectKind().GroupVersionKind()),
-				})
 				ref := appsv1alpha1.TargetReference{
-					APIVersion: father.APIVersion,
-					Kind:       father.Kind,
-					Name:       father.Name,
+					APIVersion: grandfather.GetAPIVersion(),
+					Kind:       grandfather.GetKind(),
+					Name:       grandfather.GetName(),
 				}
-				return ref, []client.Object{father, son1, son2}
+				return ref, []client.Object{grandfather, father, son}
 			},
 			Expect: true,
 		},
 		{
-			name: "indirect-3",
+			name: "pod is owned by unstructured-1, unstructured-1 is not owned by unstructured-2, target is unstructured-2",
 			TopologyBuild: func() (appsv1alpha1.TargetReference, []client.Object) {
-				father := cloneset.DeepCopy()
-				son1 := deployment.DeepCopy()
-				son1.SetOwnerReferences([]metav1.OwnerReference{
-					*metav1.NewControllerRef(father, father.GetObjectKind().GroupVersionKind()),
+				grandfather := &unstructured.Unstructured{Object: unStruct}
+				grandfather.SetGroupVersionKind(schema.FromAPIVersionAndKind(mockedAPIVersion, mockedKindGameServerSet))
+				father := &unstructured.Unstructured{Object: unStruct}
+				father.SetGroupVersionKind(schema.FromAPIVersionAndKind(mockedAPIVersion, mockedKindGameServer))
+				father.SetOwnerReferences([]metav1.OwnerReference{
+					*metav1.NewControllerRef(grandfather, grandfather.GetObjectKind().GroupVersionKind()),
 				})
-				son2 := nativeStatefulSet.DeepCopy()
-				son2.SetOwnerReferences([]metav1.OwnerReference{
-					*metav1.NewControllerRef(son1, son1.GetObjectKind().GroupVersionKind()),
-				})
-				son3 := advancedStatefulSet.DeepCopy()
-				son3.SetOwnerReferences([]metav1.OwnerReference{
-					*metav1.NewControllerRef(son2, son2.GetObjectKind().GroupVersionKind()),
+				son := podDemo.DeepCopy()
+				son.SetOwnerReferences([]metav1.OwnerReference{
+					*metav1.NewControllerRef(cloneset.DeepCopy(), cloneset.GetObjectKind().GroupVersionKind()),
 				})
 				ref := appsv1alpha1.TargetReference{
-					APIVersion: father.APIVersion,
-					Kind:       father.Kind,
-					Name:       father.Name,
+					APIVersion: grandfather.GetAPIVersion(),
+					Kind:       grandfather.GetKind(),
+					Name:       grandfather.GetName(),
 				}
-				return ref, []client.Object{father, son1, son2, son3}
-			},
-			Expect: true,
-		},
-		{
-			name: "indirect-3-false",
-			TopologyBuild: func() (appsv1alpha1.TargetReference, []client.Object) {
-				father := cloneset.DeepCopy()
-				son1 := deployment.DeepCopy()
-				son2 := nativeStatefulSet.DeepCopy()
-				son2.SetOwnerReferences([]metav1.OwnerReference{
-					*metav1.NewControllerRef(son1, son1.GetObjectKind().GroupVersionKind()),
-				})
-				son3 := advancedStatefulSet.DeepCopy()
-				son3.SetOwnerReferences([]metav1.OwnerReference{
-					*metav1.NewControllerRef(son2, son2.GetObjectKind().GroupVersionKind()),
-				})
-				ref := appsv1alpha1.TargetReference{
-					APIVersion: father.APIVersion,
-					Kind:       father.Kind,
-					Name:       father.Name,
-				}
-				return ref, []client.Object{father, son1, son2, son3}
+				return ref, []client.Object{grandfather, father, son}
 			},
 			Expect: false,
 		},
 	}
 	for _, cs := range cases {
 		t.Run(cs.name, func(t *testing.T) {
+
 			ref, objects := cs.TopologyBuild()
 			son := objects[len(objects)-1]
 			cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
