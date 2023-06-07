@@ -191,7 +191,14 @@ func (e *podEventHandler) Delete(evt event.DeleteEvent, q workqueue.RateLimiting
 
 	controllerRef := metav1.GetControllerOf(pod)
 	if controllerRef == nil {
-		// No controller should care about orphans being deleted.
+		// We should observe the deletion because someone is waiting for the pod deletion
+		// event even though its ownerReference was removed, or.
+		csList := e.getPodCloneSets(pod)
+		for _, cs := range csList {
+			csKey := types.NamespacedName{Namespace: cs.Namespace, Name: cs.Name}
+			clonesetutils.ScaleExpectations.ObserveScale(csKey.String(), expectations.Delete, pod.Name)
+			q.Add(reconcile.Request{NamespacedName: csKey})
+		}
 		return
 	}
 	req := resolveControllerRef(pod.Namespace, controllerRef)
