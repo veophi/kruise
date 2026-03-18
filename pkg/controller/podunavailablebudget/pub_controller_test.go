@@ -1257,6 +1257,436 @@ func TestPubReconcile(t *testing.T) {
 				return *status
 			},
 		},
+		// ============ PodGroupPolicy test cases ============
+		{
+			name: "podGroupPolicy: all groups available, maxUnavailable 30%",
+			getPods: func(rs ...*apps.ReplicaSet) []*corev1.Pod {
+				// 3 groups (g0, g1, g2), each with 2 pods, all ready
+				var matchedPods []*corev1.Pod
+				groups := []string{"g0", "g0", "g1", "g1", "g2", "g2"}
+				for i, g := range groups {
+					pod := podDemo.DeepCopy()
+					pod.Name = fmt.Sprintf("test-pod-%d", i)
+					pod.Labels["group-index"] = g
+					matchedPods = append(matchedPods, pod)
+				}
+				return matchedPods
+			},
+			getDeployment: func() *apps.Deployment {
+				obj := deploymentDemo.DeepCopy()
+				obj.Spec.Replicas = utilpointer.Int32(6)
+				return obj
+			},
+			getReplicaSet: func() []*apps.ReplicaSet {
+				return []*apps.ReplicaSet{replicaSetDemo.DeepCopy()}
+			},
+			getPub: func() *policyv1alpha1.PodUnavailableBudget {
+				pub := pubDemo.DeepCopy()
+				pub.Spec.PodGroupPolicy = &policyv1alpha1.PodUnavailableBudgetPodGroupPolicy{
+					GroupLabelKey: "group-index",
+					GroupSize:     ptr.To[int32](2),
+				}
+				pub.Spec.MaxUnavailable = &intstr.IntOrString{
+					Type:   intstr.String,
+					StrVal: "30%",
+				}
+				return pub
+			},
+			expectPubStatus: func() policyv1alpha1.PodUnavailableBudgetStatus {
+				// 3 groups total, maxUnavailable=30% of 6 = 1 (floor=ceil? 30% of 6=1.8 -> 2 rounded up)
+				// desiredAvailable = 6 - 2 = 4, but with group semantics:
+				// currentAvailable = 3 (all 3 groups available)
+				// TotalReplicas = 6
+				// desiredAvailable = 6 - round_up(30% * 6) = 6 - 2 = 4
+				// unavailableAllowed = 3 - 4 = -1 -> 0... Wait let me recalculate.
+				// maxUnavailable = ceil(30% * 6) = 2
+				// desiredAvailable = 6 - 2 = 4
+				// currentAvailable = 3 (group count)
+				// unavailableAllowed = 3 - 4 = -1 -> 0
+				return policyv1alpha1.PodUnavailableBudgetStatus{
+					UnavailableAllowed: 0,
+					CurrentAvailable:   3,
+					DesiredAvailable:   4,
+					TotalReplicas:      6,
+				}
+			},
+		},
+		{
+			name: "podGroupPolicy: all groups available, maxUnavailable 2 (int)",
+			getPods: func(rs ...*apps.ReplicaSet) []*corev1.Pod {
+				// 5 groups, each with 2 pods, all ready
+				var matchedPods []*corev1.Pod
+				for i := 0; i < 10; i++ {
+					pod := podDemo.DeepCopy()
+					pod.Name = fmt.Sprintf("test-pod-%d", i)
+					pod.Labels["group-index"] = fmt.Sprintf("g%d", i/2)
+					matchedPods = append(matchedPods, pod)
+				}
+				return matchedPods
+			},
+			getDeployment: func() *apps.Deployment {
+				return deploymentDemo.DeepCopy()
+			},
+			getReplicaSet: func() []*apps.ReplicaSet {
+				return []*apps.ReplicaSet{replicaSetDemo.DeepCopy()}
+			},
+			getPub: func() *policyv1alpha1.PodUnavailableBudget {
+				pub := pubDemo.DeepCopy()
+				pub.Spec.PodGroupPolicy = &policyv1alpha1.PodUnavailableBudgetPodGroupPolicy{
+					GroupLabelKey: "group-index",
+					GroupSize:     ptr.To[int32](2),
+				}
+				pub.Spec.MaxUnavailable = &intstr.IntOrString{
+					Type:   intstr.Int,
+					IntVal: 2,
+				}
+				return pub
+			},
+			expectPubStatus: func() policyv1alpha1.PodUnavailableBudgetStatus {
+				// 5 groups all available, totalReplicas=10, maxUnavailable=2
+				// desiredAvailable = 10-2=8, currentAvailable = 5
+				// unavailableAllowed = 5-8 = -3 -> 0
+				return policyv1alpha1.PodUnavailableBudgetStatus{
+					UnavailableAllowed: 0,
+					CurrentAvailable:   5,
+					DesiredAvailable:   8,
+					TotalReplicas:      10,
+				}
+			},
+		},
+		{
+			name: "podGroupPolicy: one group has not-ready pod, maxUnavailable 2",
+			getPods: func(rs ...*apps.ReplicaSet) []*corev1.Pod {
+				// 5 groups, each with 2 pods. group g2 has 1 not-ready pod
+				var matchedPods []*corev1.Pod
+				for i := 0; i < 10; i++ {
+					pod := podDemo.DeepCopy()
+					pod.Name = fmt.Sprintf("test-pod-%d", i)
+					pod.Labels["group-index"] = fmt.Sprintf("g%d", i/2)
+					// pod-5 is in group g2, make it not-ready
+					if i == 5 {
+						pod.Status.Conditions = []corev1.PodCondition{
+							{
+								Type:   corev1.PodReady,
+								Status: corev1.ConditionFalse,
+							},
+						}
+					}
+					matchedPods = append(matchedPods, pod)
+				}
+				return matchedPods
+			},
+			getDeployment: func() *apps.Deployment {
+				return deploymentDemo.DeepCopy()
+			},
+			getReplicaSet: func() []*apps.ReplicaSet {
+				return []*apps.ReplicaSet{replicaSetDemo.DeepCopy()}
+			},
+			getPub: func() *policyv1alpha1.PodUnavailableBudget {
+				pub := pubDemo.DeepCopy()
+				pub.Spec.PodGroupPolicy = &policyv1alpha1.PodUnavailableBudgetPodGroupPolicy{
+					GroupLabelKey: "group-index",
+					GroupSize:     ptr.To[int32](2),
+				}
+				pub.Spec.MaxUnavailable = &intstr.IntOrString{
+					Type:   intstr.Int,
+					IntVal: 2,
+				}
+				return pub
+			},
+			expectPubStatus: func() policyv1alpha1.PodUnavailableBudgetStatus {
+				// group g2 is unavailable (only 1 ready out of 2 needed)
+				// 4 groups available, currentAvailable = 4
+				// desiredAvailable = 10-2 = 8
+				// unavailableAllowed = 4-8 = -4 -> 0
+				return policyv1alpha1.PodUnavailableBudgetStatus{
+					UnavailableAllowed:   0,
+					CurrentAvailable:     4,
+					DesiredAvailable:     8,
+					TotalReplicas:        10,
+					UnavailablePodGroups: map[string]metav1.Time{"g2": metav1.Now()},
+				}
+			},
+		},
+		{
+			name: "podGroupPolicy: pod missing group label falls back to per-pod group",
+			getPods: func(rs ...*apps.ReplicaSet) []*corev1.Pod {
+				// 2 groups with label + 2 pods without label (treated as individual groups)
+				var matchedPods []*corev1.Pod
+				for i := 0; i < 4; i++ {
+					pod := podDemo.DeepCopy()
+					pod.Name = fmt.Sprintf("test-pod-%d", i)
+					if i < 2 {
+						pod.Labels["group-index"] = "g0"
+					}
+					// pod 2 and 3 don't have group-index label
+					matchedPods = append(matchedPods, pod)
+				}
+				return matchedPods
+			},
+			getDeployment: func() *apps.Deployment {
+				obj := deploymentDemo.DeepCopy()
+				obj.Spec.Replicas = utilpointer.Int32(4)
+				return obj
+			},
+			getReplicaSet: func() []*apps.ReplicaSet {
+				obj := replicaSetDemo.DeepCopy()
+				obj.Spec.Replicas = utilpointer.Int32(4)
+				return []*apps.ReplicaSet{obj}
+			},
+			getPub: func() *policyv1alpha1.PodUnavailableBudget {
+				pub := pubDemo.DeepCopy()
+				pub.Spec.PodGroupPolicy = &policyv1alpha1.PodUnavailableBudgetPodGroupPolicy{
+					GroupLabelKey: "group-index",
+					GroupSize:     ptr.To[int32](2),
+				}
+				pub.Spec.MaxUnavailable = &intstr.IntOrString{
+					Type:   intstr.Int,
+					IntVal: 1,
+				}
+				return pub
+			},
+			expectPubStatus: func() policyv1alpha1.PodUnavailableBudgetStatus {
+				// groups: g0 (2 pods, both ready -> available), test-pod-2 (1 pod, size=2 -> unavailable), test-pod-3 (1 pod, size=2 -> unavailable)
+				// currentAvailable = 1 (only g0)
+				// desiredAvailable = 4 - 1 = 3
+				// unavailableAllowed = 1 - 3 = -2 -> 0
+				return policyv1alpha1.PodUnavailableBudgetStatus{
+					UnavailableAllowed: 0,
+					CurrentAvailable:   1,
+					DesiredAvailable:   3,
+					TotalReplicas:      4,
+					UnavailablePodGroups: map[string]metav1.Time{
+						"test-pod-2": metav1.Now(),
+						"test-pod-3": metav1.Now(),
+					},
+				}
+			},
+		},
+		{
+			name: "podGroupPolicy: groupSize auto-derived (no explicit groupSize)",
+			getPods: func(rs ...*apps.ReplicaSet) []*corev1.Pod {
+				// 2 groups: g0 has 3 pods, g1 has 3 pods, all ready
+				var matchedPods []*corev1.Pod
+				for i := 0; i < 6; i++ {
+					pod := podDemo.DeepCopy()
+					pod.Name = fmt.Sprintf("test-pod-%d", i)
+					if i < 3 {
+						pod.Labels["group-index"] = "g0"
+					} else {
+						pod.Labels["group-index"] = "g1"
+					}
+					matchedPods = append(matchedPods, pod)
+				}
+				return matchedPods
+			},
+			getDeployment: func() *apps.Deployment {
+				obj := deploymentDemo.DeepCopy()
+				obj.Spec.Replicas = utilpointer.Int32(6)
+				return obj
+			},
+			getReplicaSet: func() []*apps.ReplicaSet {
+				obj := replicaSetDemo.DeepCopy()
+				obj.Spec.Replicas = utilpointer.Int32(6)
+				return []*apps.ReplicaSet{obj}
+			},
+			getPub: func() *policyv1alpha1.PodUnavailableBudget {
+				pub := pubDemo.DeepCopy()
+				pub.Spec.PodGroupPolicy = &policyv1alpha1.PodUnavailableBudgetPodGroupPolicy{
+					GroupLabelKey: "group-index",
+					// GroupSize is nil -> auto derived as max(2, max_group_size) = max(2,3) = 3
+				}
+				pub.Spec.MaxUnavailable = &intstr.IntOrString{
+					Type:   intstr.Int,
+					IntVal: 1,
+				}
+				return pub
+			},
+			expectPubStatus: func() policyv1alpha1.PodUnavailableBudgetStatus {
+				// auto groupSize = max(2, 3) = 3
+				// g0: 3 pods all ready >= 3 -> available
+				// g1: 3 pods all ready >= 3 -> available
+				// currentAvailable = 2, desiredAvailable = 6-1 = 5
+				// unavailableAllowed = 2-5 = -3 -> 0
+				return policyv1alpha1.PodUnavailableBudgetStatus{
+					UnavailableAllowed: 0,
+					CurrentAvailable:   2,
+					DesiredAvailable:   5,
+					TotalReplicas:      6,
+				}
+			},
+		},
+		{
+			name: "podGroupPolicy: groupSize explicitly set, all groups with enough ready pods",
+			getPods: func(rs ...*apps.ReplicaSet) []*corev1.Pod {
+				// 5 groups (g0..g4), each with 3 pods, all ready
+				var matchedPods []*corev1.Pod
+				for i := 0; i < 15; i++ {
+					pod := podDemo.DeepCopy()
+					pod.Name = fmt.Sprintf("test-pod-%d", i)
+					pod.Labels["group-index"] = fmt.Sprintf("g%d", i/3)
+					matchedPods = append(matchedPods, pod)
+				}
+				return matchedPods
+			},
+			getDeployment: func() *apps.Deployment {
+				obj := deploymentDemo.DeepCopy()
+				obj.Spec.Replicas = utilpointer.Int32(15)
+				return obj
+			},
+			getReplicaSet: func() []*apps.ReplicaSet {
+				obj := replicaSetDemo.DeepCopy()
+				obj.Spec.Replicas = utilpointer.Int32(15)
+				return []*apps.ReplicaSet{obj}
+			},
+			getPub: func() *policyv1alpha1.PodUnavailableBudget {
+				pub := pubDemo.DeepCopy()
+				pub.Spec.PodGroupPolicy = &policyv1alpha1.PodUnavailableBudgetPodGroupPolicy{
+					GroupLabelKey: "group-index",
+					GroupSize:     ptr.To[int32](3),
+				}
+				pub.Spec.MaxUnavailable = &intstr.IntOrString{
+					Type:   intstr.Int,
+					IntVal: 5,
+				}
+				return pub
+			},
+			expectPubStatus: func() policyv1alpha1.PodUnavailableBudgetStatus {
+				// 5 groups all available, totalReplicas=15, maxUnavailable=5
+				// desiredAvailable = 15-5 = 10, currentAvailable = 5
+				// unavailableAllowed = 5-10 = -5 -> 0
+				return policyv1alpha1.PodUnavailableBudgetStatus{
+					UnavailableAllowed: 0,
+					CurrentAvailable:   5,
+					DesiredAvailable:   10,
+					TotalReplicas:      15,
+				}
+			},
+		},
+		{
+			name: "podGroupPolicy: multiple groups unavailable due to not-ready pods",
+			getPods: func(rs ...*apps.ReplicaSet) []*corev1.Pod {
+				// 4 groups (g0..g3), each with 2 pods
+				// g0: both ready, g1: 1 not ready, g2: both not ready, g3: both ready
+				var matchedPods []*corev1.Pod
+				for i := 0; i < 8; i++ {
+					pod := podDemo.DeepCopy()
+					pod.Name = fmt.Sprintf("test-pod-%d", i)
+					pod.Labels["group-index"] = fmt.Sprintf("g%d", i/2)
+					// g1: pod 3 not ready
+					// g2: pod 4,5 not ready
+					if i == 3 || i == 4 || i == 5 {
+						pod.Status.Conditions = []corev1.PodCondition{
+							{
+								Type:   corev1.PodReady,
+								Status: corev1.ConditionFalse,
+							},
+						}
+					}
+					matchedPods = append(matchedPods, pod)
+				}
+				return matchedPods
+			},
+			getDeployment: func() *apps.Deployment {
+				obj := deploymentDemo.DeepCopy()
+				obj.Spec.Replicas = utilpointer.Int32(8)
+				return obj
+			},
+			getReplicaSet: func() []*apps.ReplicaSet {
+				obj := replicaSetDemo.DeepCopy()
+				obj.Spec.Replicas = utilpointer.Int32(8)
+				return []*apps.ReplicaSet{obj}
+			},
+			getPub: func() *policyv1alpha1.PodUnavailableBudget {
+				pub := pubDemo.DeepCopy()
+				pub.Spec.PodGroupPolicy = &policyv1alpha1.PodUnavailableBudgetPodGroupPolicy{
+					GroupLabelKey: "group-index",
+					GroupSize:     ptr.To[int32](2),
+				}
+				pub.Spec.MaxUnavailable = &intstr.IntOrString{
+					Type:   intstr.Int,
+					IntVal: 2,
+				}
+				return pub
+			},
+			expectPubStatus: func() policyv1alpha1.PodUnavailableBudgetStatus {
+				// g0: available, g1: unavailable, g2: unavailable, g3: available
+				// currentAvailable = 2, desiredAvailable = 8-2 = 6
+				// unavailableAllowed = 2-6 = -4 -> 0
+				return policyv1alpha1.PodUnavailableBudgetStatus{
+					UnavailableAllowed: 0,
+					CurrentAvailable:   2,
+					DesiredAvailable:   6,
+					TotalReplicas:      8,
+					UnavailablePodGroups: map[string]metav1.Time{
+						"g1": metav1.Now(),
+						"g2": metav1.Now(),
+					},
+				}
+			},
+		},
+		{
+			name: "podGroupPolicy with targetRef, all groups available",
+			getPods: func(rs ...*apps.ReplicaSet) []*corev1.Pod {
+				// 3 groups each with 2 pods, all ready
+				var matchedPods []*corev1.Pod
+				for i := 0; i < 6; i++ {
+					pod := podDemo.DeepCopy()
+					pod.OwnerReferences = []metav1.OwnerReference{
+						{
+							APIVersion: "apps/v1",
+							Kind:       "ReplicaSet",
+							Name:       rs[0].Name,
+							UID:        rs[0].UID,
+							Controller: ptr.To(true),
+						},
+					}
+					pod.Name = fmt.Sprintf("test-pod-%d", i)
+					pod.Labels["group-index"] = fmt.Sprintf("g%d", i/2)
+					matchedPods = append(matchedPods, pod)
+				}
+				return matchedPods
+			},
+			getDeployment: func() *apps.Deployment {
+				obj := deploymentDemo.DeepCopy()
+				obj.Spec.Replicas = utilpointer.Int32(6)
+				return obj
+			},
+			getReplicaSet: func() []*apps.ReplicaSet {
+				obj := replicaSetDemo.DeepCopy()
+				obj.Name = "nginx-rs-1"
+				return []*apps.ReplicaSet{obj}
+			},
+			getPub: func() *policyv1alpha1.PodUnavailableBudget {
+				pub := pubDemo.DeepCopy()
+				pub.Spec.Selector = nil
+				pub.Spec.TargetReference = &policyv1alpha1.TargetReference{
+					APIVersion: "apps/v1",
+					Kind:       "Deployment",
+					Name:       "nginx",
+				}
+				pub.Spec.PodGroupPolicy = &policyv1alpha1.PodUnavailableBudgetPodGroupPolicy{
+					GroupLabelKey: "group-index",
+					GroupSize:     ptr.To[int32](2),
+				}
+				pub.Spec.MaxUnavailable = &intstr.IntOrString{
+					Type:   intstr.Int,
+					IntVal: 1,
+				}
+				return pub
+			},
+			expectPubStatus: func() policyv1alpha1.PodUnavailableBudgetStatus {
+				// 3 groups all available, totalReplicas=6, maxUnavailable=1
+				// desiredAvailable = 6-1 = 5, currentAvailable = 3
+				// unavailableAllowed = 3-5 = -2 -> 0
+				return policyv1alpha1.PodUnavailableBudgetStatus{
+					UnavailableAllowed: 0,
+					CurrentAvailable:   3,
+					DesiredAvailable:   5,
+					TotalReplicas:      6,
+				}
+			},
+		},
 	}
 
 	for _, cs := range cases {
@@ -1356,12 +1786,227 @@ func isPubStatusEqual(expectStatus, nowStatus policyv1alpha1.PodUnavailableBudge
 	for i := range expectStatus.DisruptedPods {
 		expectStatus.DisruptedPods[i] = nTime
 	}
+	for i := range expectStatus.UnavailablePodGroups {
+		expectStatus.UnavailablePodGroups[i] = nTime
+	}
 	for i := range nowStatus.UnavailablePods {
 		nowStatus.UnavailablePods[i] = nTime
 	}
 	for i := range nowStatus.DisruptedPods {
 		nowStatus.DisruptedPods[i] = nTime
 	}
+	for i := range nowStatus.UnavailablePodGroups {
+		nowStatus.UnavailablePodGroups[i] = nTime
+	}
 
 	return reflect.DeepEqual(expectStatus, nowStatus)
+}
+
+func TestGetGroupSize(t *testing.T) {
+	cases := []struct {
+		name       string
+		pub        *policyv1alpha1.PodUnavailableBudget
+		groupPods  map[string][]*corev1.Pod
+		expectSize int32
+	}{
+		{
+			name: "no PodGroupPolicy returns 0",
+			pub: &policyv1alpha1.PodUnavailableBudget{
+				Spec: policyv1alpha1.PodUnavailableBudgetSpec{},
+			},
+			groupPods:  map[string][]*corev1.Pod{"g0": {{}, {}}},
+			expectSize: 0,
+		},
+		{
+			name: "explicit GroupSize is used",
+			pub: &policyv1alpha1.PodUnavailableBudget{
+				Spec: policyv1alpha1.PodUnavailableBudgetSpec{
+					PodGroupPolicy: &policyv1alpha1.PodUnavailableBudgetPodGroupPolicy{
+						GroupLabelKey: "key",
+						GroupSize:     ptr.To[int32](5),
+					},
+				},
+			},
+			groupPods: map[string][]*corev1.Pod{
+				"g0": {{}, {}, {}},
+				"g1": {{}, {}},
+			},
+			expectSize: 5,
+		},
+		{
+			name: "auto-derived GroupSize: max(2, max_group_size)",
+			pub: &policyv1alpha1.PodUnavailableBudget{
+				Spec: policyv1alpha1.PodUnavailableBudgetSpec{
+					PodGroupPolicy: &policyv1alpha1.PodUnavailableBudgetPodGroupPolicy{
+						GroupLabelKey: "key",
+					},
+				},
+			},
+			groupPods: map[string][]*corev1.Pod{
+				"g0": {{}, {}, {}, {}}, // 4 pods
+				"g1": {{}, {}},         // 2 pods
+			},
+			expectSize: 4, // max(2, 4) = 4
+		},
+		{
+			name: "auto-derived GroupSize: max(2, 1) = 2",
+			pub: &policyv1alpha1.PodUnavailableBudget{
+				Spec: policyv1alpha1.PodUnavailableBudgetSpec{
+					PodGroupPolicy: &policyv1alpha1.PodUnavailableBudgetPodGroupPolicy{
+						GroupLabelKey: "key",
+					},
+				},
+			},
+			groupPods: map[string][]*corev1.Pod{
+				"g0": {{}}, // 1 pod
+			},
+			expectSize: 2, // max(2, 1) = 2
+		},
+		{
+			name: "auto-derived GroupSize: empty groupPods returns 2",
+			pub: &policyv1alpha1.PodUnavailableBudget{
+				Spec: policyv1alpha1.PodUnavailableBudgetSpec{
+					PodGroupPolicy: &policyv1alpha1.PodUnavailableBudgetPodGroupPolicy{
+						GroupLabelKey: "key",
+					},
+				},
+			},
+			groupPods:  map[string][]*corev1.Pod{},
+			expectSize: 2,
+		},
+	}
+
+	for _, cs := range cases {
+		t.Run(cs.name, func(t *testing.T) {
+			got := getGroupSize(cs.pub, cs.groupPods)
+			if got != cs.expectSize {
+				t.Fatalf("expected groupSize %d, got %d", cs.expectSize, got)
+			}
+		})
+	}
+}
+
+func TestCountAvailablePodGroups(t *testing.T) {
+	cases := []struct {
+		name                 string
+		groupPods            map[string][]*corev1.Pod
+		unavailablePodGroups map[string]metav1.Time
+		expectAvailable      int32
+	}{
+		{
+			name: "all groups available",
+			groupPods: map[string][]*corev1.Pod{
+				"g0": {{}},
+				"g1": {{}},
+				"g2": {{}},
+			},
+			unavailablePodGroups: map[string]metav1.Time{},
+			expectAvailable:      3,
+		},
+		{
+			name: "one group unavailable",
+			groupPods: map[string][]*corev1.Pod{
+				"g0": {{}},
+				"g1": {{}},
+				"g2": {{}},
+			},
+			unavailablePodGroups: map[string]metav1.Time{
+				"g1": metav1.Now(),
+			},
+			expectAvailable: 2,
+		},
+		{
+			name: "all groups unavailable",
+			groupPods: map[string][]*corev1.Pod{
+				"g0": {{}},
+				"g1": {{}},
+			},
+			unavailablePodGroups: map[string]metav1.Time{
+				"g0": metav1.Now(),
+				"g1": metav1.Now(),
+			},
+			expectAvailable: 0,
+		},
+		{
+			name:                 "empty groups",
+			groupPods:            map[string][]*corev1.Pod{},
+			unavailablePodGroups: map[string]metav1.Time{},
+			expectAvailable:      0,
+		},
+	}
+
+	for _, cs := range cases {
+		t.Run(cs.name, func(t *testing.T) {
+			got := countAvailablePodGroups(cs.groupPods, cs.unavailablePodGroups)
+			if got != cs.expectAvailable {
+				t.Fatalf("expected %d available, got %d", cs.expectAvailable, got)
+			}
+		})
+	}
+}
+
+func TestCountAvailableReplicas(t *testing.T) {
+	// Initialize PubControl so that countAvailablePods (non-group path) works.
+	pubcontrol.InitPubControl(nil, nil, record.NewFakeRecorder(10))
+
+	makePod := func(name string) *corev1.Pod {
+		return podDemo.DeepCopy()
+	}
+	_ = makePod // suppress unused
+
+	cases := []struct {
+		name            string
+		pub             *policyv1alpha1.PodUnavailableBudget
+		groupPods       map[string][]*corev1.Pod
+		disruptedPods   map[string]metav1.Time
+		unavailPods     map[string]metav1.Time
+		unavailGroups   map[string]metav1.Time
+		expectAvailable int32
+	}{
+		{
+			name: "without PodGroupPolicy, uses per-pod counting",
+			pub: &policyv1alpha1.PodUnavailableBudget{
+				Spec: policyv1alpha1.PodUnavailableBudgetSpec{},
+			},
+			groupPods: map[string][]*corev1.Pod{
+				"pod-0": {podDemo.DeepCopy()},
+				"pod-1": {podDemo.DeepCopy()},
+				"pod-2": {podDemo.DeepCopy()},
+			},
+			disruptedPods:   map[string]metav1.Time{},
+			unavailPods:     map[string]metav1.Time{},
+			unavailGroups:   map[string]metav1.Time{},
+			expectAvailable: 3,
+		},
+		{
+			name: "with PodGroupPolicy, uses group counting",
+			pub: &policyv1alpha1.PodUnavailableBudget{
+				Spec: policyv1alpha1.PodUnavailableBudgetSpec{
+					PodGroupPolicy: &policyv1alpha1.PodUnavailableBudgetPodGroupPolicy{
+						GroupLabelKey: "group-index",
+					},
+				},
+			},
+			groupPods: map[string][]*corev1.Pod{
+				"g0": {podDemo.DeepCopy(), podDemo.DeepCopy()},
+				"g1": {podDemo.DeepCopy(), podDemo.DeepCopy()},
+				"g2": {podDemo.DeepCopy(), podDemo.DeepCopy()},
+			},
+			disruptedPods: map[string]metav1.Time{},
+			unavailPods:   map[string]metav1.Time{},
+			unavailGroups: map[string]metav1.Time{
+				"g1": metav1.Now(),
+			},
+			expectAvailable: 2,
+		},
+	}
+
+	for _, cs := range cases {
+		t.Run(cs.name, func(t *testing.T) {
+			got := countAvailableReplicas(cs.pub, cs.groupPods, cs.disruptedPods, cs.unavailPods, cs.unavailGroups)
+			if got != cs.expectAvailable {
+				t.Fatalf("expected %d, got %d", cs.expectAvailable, got)
+			}
+		})
+	}
 }
